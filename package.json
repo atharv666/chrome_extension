@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "build": "node esbuild.config.js",
-    "dev": "node esbuild.config.js --watch"
+    "dev": "node esbuild.config.js --watch",
+    "listen:parse": "node scripts/parse-listener.js"
   },
   "repository": {
     "type": "git",

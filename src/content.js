@@ -1,3 +1,5 @@
+import { initParsingCollector } from "./parsing/collector.js";
+
 // ===== Focus Flow - Content Script =====
 // Injected into every page. Handles:
 // 1. Inactivity detection (only during active sessions on allowed sites)
@@ -821,3 +823,10 @@ chrome.runtime.onMessage.addListener((msg) => {
     startDistraction(msg.site);
   }
 });
+
+// ================================================================
+// SECTION 5: PARSING COLLECTOR
+// ================================================================
+
+const parsingCollector = initParsingCollector();
+parsingCollector.start();

@@ -628,3 +628,138 @@ input::placeholder {
   margin-bottom: 16px;
   animation: fadeIn 0.2s ease;
 }
+
+/* ===== Session History ===== */
+
+.history-loading {
+  text-align: center;
+  padding: 24px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.history-empty {
+  text-align: center;
+  padding: 32px 0 16px;
+}
+
+.history-empty-icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+}
+
+.history-summary {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.history-summary-item {
+  flex: 1;
+  text-align: center;
+  padding: 10px 8px;
+  background: var(--primary-light);
+  border-radius: var(--radius-sm);
+}
+
+.history-summary-value {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+.history-summary-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-top: 2px;
+}
+
+.history-list {
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.history-date-group {
+  margin-bottom: 12px;
+}
+
+.history-date-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  background: var(--bg);
+  border-radius: var(--radius-sm);
+  animation: fadeIn 0.2s ease;
+}
+
+.history-item-topic {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.history-item-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.history-item-right {
+  text-align: right;
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+
+.history-score {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.history-score.high {
+  color: var(--success);
+}
+
+.history-score.med {
+  color: var(--secondary);
+}
+
+.history-score.low {
+  color: var(--error);
+}
+
+.history-distractions {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.history-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.history-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}

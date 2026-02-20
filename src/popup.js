@@ -345,12 +345,14 @@ function showMain(user) {
       </div>
 
       <button class="btn btn-primary" id="start-btn">Start Focus Session</button>
+      <button class="btn btn-secondary" id="history-btn">Session History</button>
       <button class="btn btn-ghost" id="close-btn">Not right now</button>
       <button class="btn btn-ghost" id="logout-btn" style="color:var(--error);font-size:12px;margin-top:4px;">Sign Out</button>
     </div>
   `;
 
   document.getElementById("start-btn").onclick = showSessionSetup;
+  document.getElementById("history-btn").onclick = showHistory;
   document.getElementById("close-btn").onclick = () => window.close();
   document.getElementById("logout-btn").onclick = async () => {
     await logout();
@@ -804,6 +806,106 @@ function showSessionSummary(duration, topic, user, stats) {
 
   document.getElementById("new-session-btn").onclick = showSessionSetup;
   document.getElementById("done-btn").onclick = () => window.close();
+}
+
+// ===== Screen: Session History =====
+
+async function showHistory() {
+  app.innerHTML = `
+    <div class="screen">
+      <div class="header">
+        <div class="brand">Focus Flow</div>
+        <h1>Session History</h1>
+        <p class="subtitle">Your recent study sessions.</p>
+      </div>
+      <div id="history-content">
+        <div class="history-loading">Loading...</div>
+      </div>
+      <button class="btn btn-ghost" id="history-back-btn">Back</button>
+    </div>
+  `;
+
+  document.getElementById("history-back-btn").onclick = async () => {
+    const { user } = await chrome.storage.local.get(["user"]);
+    showMain(user);
+  };
+
+  // Load from local storage
+  const { sessionHistory = [] } = await chrome.storage.local.get(["sessionHistory"]);
+  const contentEl = document.getElementById("history-content");
+
+  if (sessionHistory.length === 0) {
+    contentEl.innerHTML = `
+      <div class="history-empty">
+        <div class="history-empty-icon">&#128218;</div>
+        <p>No sessions yet.</p>
+        <p style="font-size:12px;color:var(--text-muted);margin-top:4px;">
+          Complete a focus session to see it here.
+        </p>
+      </div>
+    `;
+    return;
+  }
+
+  // Sort most recent first
+  const sorted = [...sessionHistory].sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
+
+  // Group sessions by date
+  const grouped = {};
+  for (const s of sorted) {
+    const date = new Date(s.startTime || s.endTime || Date.now());
+    const key = date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(s);
+  }
+
+  let html = '<div class="history-list">';
+  for (const [dateLabel, sessions] of Object.entries(grouped)) {
+    html += `<div class="history-date-group">
+      <div class="history-date-label">${escapeHtml(dateLabel)}</div>`;
+    for (const s of sessions) {
+      const startDate = new Date(s.startTime || s.endTime || Date.now());
+      const timeStr = startDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      const scoreClass = s.focusScore >= 80 ? "high" : s.focusScore >= 50 ? "med" : "low";
+      html += `
+        <div class="history-item">
+          <div class="history-item-main">
+            <div class="history-item-topic">${escapeHtml(s.topic || "Untitled")}</div>
+            <div class="history-item-meta">${timeStr} &middot; ${formatTime(s.duration || 0)}</div>
+          </div>
+          <div class="history-item-right">
+            <div class="history-score ${scoreClass}">${s.focusScore != null ? s.focusScore + "%" : "--"}</div>
+            ${s.distractions > 0 ? `<div class="history-distractions">${s.distractions} distraction${s.distractions !== 1 ? "s" : ""}</div>` : ""}
+          </div>
+        </div>`;
+    }
+    html += `</div>`;
+  }
+  html += "</div>";
+
+  // Summary stats across all sessions
+  const totalSessions = sorted.length;
+  const totalTime = sorted.reduce((sum, s) => sum + (s.duration || 0), 0);
+  const avgScore = Math.round(sorted.reduce((sum, s) => sum + (s.focusScore || 0), 0) / totalSessions);
+
+  const summaryHtml = `
+    <div class="history-summary">
+      <div class="history-summary-item">
+        <div class="history-summary-value">${totalSessions}</div>
+        <div class="history-summary-label">Sessions</div>
+      </div>
+      <div class="history-summary-item">
+        <div class="history-summary-value">${formatTime(totalTime)}</div>
+        <div class="history-summary-label">Total Time</div>
+      </div>
+      <div class="history-summary-item">
+        <div class="history-summary-value">${avgScore}%</div>
+        <div class="history-summary-label">Avg Score</div>
+      </div>
+    </div>
+  `;
+
+  contentEl.innerHTML = summaryHtml + html;
 }
 
 // ===== Session History (Local) =====

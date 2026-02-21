@@ -24,6 +24,7 @@ let sessionTopic = "";
 let inactivityTimer = null;
 let lastActivity = Date.now();
 const INACTIVITY_LIMIT = 60000; // 60 seconds
+let inactivityRemainingMs = INACTIVITY_LIMIT;
 
 // Distraction state
 let distractionStage = 0; // 0=none, 1=first timer, 2=second timer, 3=mascot shown
@@ -32,6 +33,9 @@ let distractionSecondsLeft = 0;
 let currentDistractedSite = null;
 let distractionStartedAt = null; // timestamp when current distraction began
 const DISTRACTION_LIMIT = 10; // 10 seconds per stage (for testing)
+let distractionRecorded = false;
+
+let pageIsVisible = document.visibilityState === "visible";
 
 // ===== CSS Animation Injection =====
 
@@ -283,37 +287,61 @@ chrome.storage.onChanged.addListener((changes) => {
 // ================================================================
 
 function initInactivityDetection() {
-  cleanupInactivityDetection();
+  cleanupInactivityDetection(false);
   lastActivity = Date.now();
+  inactivityRemainingMs = INACTIVITY_LIMIT;
 
   ["click", "keydown", "scroll", "touchstart", "mousemove"].forEach((ev) => {
     document.addEventListener(ev, handleActivity, true);
   });
 
-  inactivityTimer = setTimeout(showInactivityOverlay, INACTIVITY_LIMIT);
+  resumeInactivityTimer();
 }
 
-function cleanupInactivityDetection() {
+function cleanupInactivityDetection(removeListeners = true) {
   if (inactivityTimer) {
     clearTimeout(inactivityTimer);
     inactivityTimer = null;
   }
-  ["click", "keydown", "scroll", "touchstart", "mousemove"].forEach((ev) => {
-    document.removeEventListener(ev, handleActivity, true);
-  });
+  if (removeListeners) {
+    ["click", "keydown", "scroll", "touchstart", "mousemove"].forEach((ev) => {
+      document.removeEventListener(ev, handleActivity, true);
+    });
+  }
+}
+
+function pauseInactivityTimer() {
+  if (!inactivityTimer) return;
+  clearTimeout(inactivityTimer);
+  inactivityTimer = null;
+  const elapsed = Date.now() - lastActivity;
+  inactivityRemainingMs = Math.max(0, INACTIVITY_LIMIT - elapsed);
+}
+
+function resumeInactivityTimer() {
+  if (!isSessionActive || !pageIsVisible) return;
+  if (distractionStage > 0) return;
+
+  if (inactivityTimer) clearTimeout(inactivityTimer);
+  const delay = Math.max(1, inactivityRemainingMs);
+  inactivityTimer = setTimeout(showInactivityOverlay, delay);
 }
 
 function handleActivity() {
+  if (!pageIsVisible) return;
+
   const now = Date.now();
   if (now - lastActivity < 1000) return;
   lastActivity = now;
+  inactivityRemainingMs = INACTIVITY_LIMIT;
 
   if (inactivityTimer) clearTimeout(inactivityTimer);
-  inactivityTimer = setTimeout(showInactivityOverlay, INACTIVITY_LIMIT);
+  inactivityTimer = setTimeout(showInactivityOverlay, inactivityRemainingMs);
 }
 
 function showInactivityOverlay() {
   if (!isSessionActive) return;
+  if (!pageIsVisible) return;
   if (document.getElementById("ff-overlay")) return;
 
   const overlay = createOverlay();
@@ -327,8 +355,9 @@ function showInactivityOverlay() {
   btn.onclick = () => {
     overlay.remove();
     lastActivity = Date.now();
+    inactivityRemainingMs = INACTIVITY_LIMIT;
     if (inactivityTimer) clearTimeout(inactivityTimer);
-    inactivityTimer = setTimeout(showInactivityOverlay, INACTIVITY_LIMIT);
+    inactivityTimer = setTimeout(showInactivityOverlay, inactivityRemainingMs);
   };
   card.appendChild(btn);
 
@@ -348,20 +377,21 @@ function startDistraction(site) {
   cleanupDistraction();
   currentDistractedSite = site;
   distractionStage = 1;
-
-  // Record this distraction event
-  recordDistractionStart(site);
+  distractionRecorded = false;
 
   // Pause inactivity detection while on distraction site
-  cleanupInactivityDetection();
+  cleanupInactivityDetection(false);
 
-  startDistractionCountdown();
+  if (pageIsVisible) {
+    startDistractionCountdown();
+  }
 }
 
 function cleanupDistraction() {
   distractionStage = 0;
   currentDistractedSite = null;
   distractionSecondsLeft = 0;
+  distractionRecorded = false;
 
   if (distractionCountdown) {
     clearInterval(distractionCountdown);
@@ -373,9 +403,48 @@ function cleanupDistraction() {
 }
 
 function startDistractionCountdown() {
-  distractionSecondsLeft = DISTRACTION_LIMIT;
+  if (!pageIsVisible) return;
+
+  if (distractionCountdown) {
+    clearInterval(distractionCountdown);
+    distractionCountdown = null;
+  }
+
+  if (!distractionRecorded && currentDistractedSite) {
+    recordDistractionStart(currentDistractedSite);
+    distractionRecorded = true;
+  }
+
+  if (distractionSecondsLeft <= 0) {
+    distractionSecondsLeft = DISTRACTION_LIMIT;
+  }
   showTimerNotification();
 
+  distractionCountdown = setInterval(() => {
+    distractionSecondsLeft--;
+    updateTimerNotification();
+
+    if (distractionSecondsLeft <= 0) {
+      clearInterval(distractionCountdown);
+      distractionCountdown = null;
+      removeTimerNotification();
+      onDistractionTimerEnd();
+    }
+  }, 1000);
+}
+
+function pauseDistractionCountdown() {
+  if (!distractionCountdown) return;
+  clearInterval(distractionCountdown);
+  distractionCountdown = null;
+}
+
+function resumeDistractionCountdown() {
+  if (!isSessionActive || !pageIsVisible) return;
+  if (!currentDistractedSite || distractionStage === 0 || distractionStage === 3) return;
+  if (distractionCountdown) return;
+
+  showTimerNotification();
   distractionCountdown = setInterval(() => {
     distractionSecondsLeft--;
     updateTimerNotification();
@@ -476,6 +545,7 @@ function showStage1Overlay() {
     // User chose to stay distracted → start Stage 2 timer
     overlay.remove();
     distractionStage = 2;
+    distractionSecondsLeft = DISTRACTION_LIMIT;
     startDistractionCountdown();
   };
 
@@ -821,6 +891,25 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.action === "block") {
     // Background says this site is not allowed → start distraction timer
     startDistraction(msg.site);
+  }
+});
+
+document.addEventListener("visibilitychange", () => {
+  pageIsVisible = document.visibilityState === "visible";
+
+  if (!isSessionActive) return;
+
+  if (pageIsVisible) {
+    if (distractionStage > 0 && currentDistractedSite) {
+      resumeDistractionCountdown();
+    } else {
+      resumeInactivityTimer();
+    }
+  } else {
+    pauseInactivityTimer();
+    pauseDistractionCountdown();
+    removeOverlay();
+    removeTimerNotification();
   }
 });
 

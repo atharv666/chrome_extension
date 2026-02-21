@@ -345,6 +345,7 @@ function showMain(user) {
       </div>
 
       <button class="btn btn-primary" id="start-btn">Start Focus Session</button>
+      <button class="btn btn-secondary" id="dashboard-btn">Open Dashboard</button>
       <button class="btn btn-secondary" id="history-btn">Session History</button>
       <button class="btn btn-ghost" id="close-btn">Not right now</button>
       <button class="btn btn-ghost" id="logout-btn" style="color:var(--error);font-size:12px;margin-top:4px;">Sign Out</button>
@@ -352,6 +353,9 @@ function showMain(user) {
   `;
 
   document.getElementById("start-btn").onclick = showSessionSetup;
+  document.getElementById("dashboard-btn").onclick = () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });
+  };
   document.getElementById("history-btn").onclick = showHistory;
   document.getElementById("close-btn").onclick = () => window.close();
   document.getElementById("logout-btn").onclick = async () => {
@@ -740,6 +744,8 @@ async function endSession(session, user) {
     focusScore: stats ? computeFocusScore(elapsed, stats.totalTime) : 100,
     distractions: stats ? stats.count : 0,
     distractionTime: stats ? stats.totalTime : 0,
+    distractingSites: stats && stats.sites ? { ...stats.sites } : {},
+    choices: stats && stats.choices ? { ...stats.choices } : { angel: 0, devil: 0 },
   };
 
   // Save to local history

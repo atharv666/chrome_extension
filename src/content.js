@@ -636,7 +636,7 @@ function createBubbleTailSVG(isDevil) {
 
   const polygon = document.createElementNS(svgNS, "polygon");
   polygon.setAttribute("points", isDevil ? "0,0 20,0 4,10" : "0,0 20,0 16,10");
-  polygon.setAttribute("fill", isDevil ? "#FFF0F0" : "#EEFBF1");
+  polygon.setAttribute("fill", isDevil ? "#FFF0F0" : "#FFF8E7");
   svg.appendChild(polygon);
 
   return svg;
@@ -663,7 +663,7 @@ function createBubble(speaker, text) {
   const bubble = document.createElement("div");
   Object.assign(bubble.style, {
     position: "relative",
-    background: isDevil ? "#FFF0F0" : "#EEFBF1",
+    background: isDevil ? "#FFF0F0" : "#FFF8E7",
     color: FF_TEXT,
     padding: "16px 22px",
     borderRadius: "16px",
@@ -960,7 +960,7 @@ function createChoiceArrow(side) {
   Object.assign(wrapper.style, {
     position: "absolute",
     [isDevil ? "left" : "right"]: "18%",
-    top: "32%",
+    top: "22%",
     zIndex: "3",
     pointerEvents: "none",
     opacity: "0",
@@ -1166,7 +1166,7 @@ function enableMascotChoice(overlay, devilMascot, angelMascot) {
   rightZone.onmouseenter = () => {
     gsap.to(angelMascot, {
       scale: 1.12,
-      filter: "drop-shadow(0 0 28px rgba(46, 204, 113, 0.8))",
+      filter: "drop-shadow(0 0 28px rgba(255, 200, 60, 0.8))",
       duration: 0.45,
       ease: "power2.out",
     });

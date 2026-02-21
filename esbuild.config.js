@@ -7,6 +7,7 @@ const buildOptions = {
     "src/popup.js",
     "src/background.js",
     "src/content.js",
+    "src/dashboard.js",
   ],
   bundle: true,
   outdir: "dist",

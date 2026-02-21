@@ -162,28 +162,22 @@ async function flushParseQueue() {
       type: "batch",
       timestamp: Date.now(),
       study_topic: session.topic || "",
-      timers: {
-        session_duration: session.startTime
-          ? Math.floor((Date.now() - session.startTime) / 1000)
-          : 0,
-      },
-      behavior: {
-        tab_switches: tabTracking.tabSwitchCount,
-      },
-      tab_tracking: {
-        active_tab_id: tabTracking.activeTabId,
-        active_tab_time_seconds: tabTracking.activeTabId
-          ? Math.floor((tabTracking.perTabMs[tabTracking.activeTabId] || 0) / 1000)
-          : 0,
-        open_tabs: buildOpenTabsSnapshot(),
-        per_tab_seconds: Object.fromEntries(
-          Object.entries(tabTracking.perTabMs).map(([tabId, ms]) => [
-            tabId,
-            Math.floor(ms / 1000),
-          ])
-        ),
-      },
-      items,
+      session_duration: session.startTime
+        ? Math.floor((Date.now() - session.startTime) / 1000)
+        : 0,
+      tab_switches: tabTracking.tabSwitchCount,
+      active_tab_id: tabTracking.activeTabId,
+      active_tab_time_seconds: tabTracking.activeTabId
+        ? Math.floor((tabTracking.perTabMs[tabTracking.activeTabId] || 0) / 1000)
+        : 0,
+      open_tabs: buildOpenTabsSnapshot(),
+      per_tab_seconds: Object.fromEntries(
+        Object.entries(tabTracking.perTabMs).map(([tabId, ms]) => [
+          tabId,
+          Math.floor(ms / 1000),
+        ])
+      ),
+      events: items,
     };
 
     await postParsedData(payload);
@@ -219,25 +213,21 @@ async function handleParseImmediate(payload, sender) {
     type: "immediate",
     timestamp: Date.now(),
     study_topic: session.topic || "",
-    timers: {
-      session_duration: session.startTime
-        ? Math.floor((Date.now() - session.startTime) / 1000)
-        : 0,
-    },
-    behavior: {
-      tab_switches: tabTracking.tabSwitchCount,
-    },
-    tab_tracking: {
-      active_tab_id: tabTracking.activeTabId,
-      active_tab_time_seconds: tabTracking.activeTabId
-        ? Math.floor((tabTracking.perTabMs[tabTracking.activeTabId] || 0) / 1000)
-        : 0,
-      open_tabs: buildOpenTabsSnapshot(),
-    },
-    item: {
-      ...payload,
-      tab_id: tabId || null,
-    },
+    session_duration: session.startTime
+      ? Math.floor((Date.now() - session.startTime) / 1000)
+      : 0,
+    tab_switches: tabTracking.tabSwitchCount,
+    active_tab_id: tabTracking.activeTabId,
+    active_tab_time_seconds: tabTracking.activeTabId
+      ? Math.floor((tabTracking.perTabMs[tabTracking.activeTabId] || 0) / 1000)
+      : 0,
+    open_tabs: buildOpenTabsSnapshot(),
+    events: [
+      {
+        ...payload,
+        tab_id: tabId || null,
+      },
+    ],
   };
 
   await postParsedData(immediatePayload);

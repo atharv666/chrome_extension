@@ -27,5 +27,11 @@
       "js": ["dist/content.js"],
       "run_at": "document_idle"
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["dashboard.html", "dashboard.css"],
+      "matches": ["<all_urls>"]
+    }
   ]
 }

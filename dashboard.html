@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Focus Flow - Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav">
+    <div class="nav-inner">
+      <div class="nav-brand">Focus Flow</div>
+      <div class="nav-right">
+        <div class="nav-session-badge" id="nav-session-badge" style="display:none;">
+          <span class="nav-session-dot"></span>
+          <span>Session Active</span>
+        </div>
+        <div class="nav-user" id="nav-user">
+          <div class="nav-avatar" id="nav-avatar">?</div>
+          <span class="nav-username" id="nav-username">User</span>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main class="main">
+
+    <!-- Hero Section -->
+    <section class="hero" id="hero-section">
+      <div class="hero-content">
+        <div class="hero-text">
+          <p class="hero-date" id="hero-date"></p>
+          <h1 class="hero-title" id="hero-title">Welcome back</h1>
+          <p class="hero-subtitle" id="hero-subtitle">Let's see how your focus journey is going.</p>
+        </div>
+        <div class="hero-streak" id="hero-streak">
+          <div class="streak-number" id="streak-number">0</div>
+          <div class="streak-label">Day Streak</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Today's Summary -->
+    <section class="section">
+      <h2 class="section-title">Today's Summary</h2>
+      <div class="stats-grid stats-grid-4">
+        <div class="stat-card">
+          <div class="stat-card-icon">&#9201;</div>
+          <div class="stat-card-value" id="today-focus-time">0m</div>
+          <div class="stat-card-label">Focus Time</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-icon">&#10003;</div>
+          <div class="stat-card-value" id="today-sessions">0</div>
+          <div class="stat-card-label">Sessions</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-icon">&#9733;</div>
+          <div class="stat-card-value" id="today-score">--%</div>
+          <div class="stat-card-label">Avg Focus Score</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-icon">&#128737;</div>
+          <div class="stat-card-value" id="today-distractions">0</div>
+          <div class="stat-card-label">Distractions</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Weekly Trends -->
+    <section class="section">
+      <h2 class="section-title">Weekly Trends</h2>
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h3 class="chart-card-title">Focus Time</h3>
+          <p class="chart-card-subtitle">Hours per day, last 7 days</p>
+          <div class="chart-container">
+            <canvas id="chart-weekly-time"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <h3 class="chart-card-title">Focus Score</h3>
+          <p class="chart-card-subtitle">Average score per day</p>
+          <div class="chart-container">
+            <canvas id="chart-weekly-score"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- All-Time Stats -->
+    <section class="section section-warm">
+      <h2 class="section-title">All-Time Stats</h2>
+      <div class="stats-grid stats-grid-4">
+        <div class="stat-card stat-card-elevated">
+          <div class="stat-card-value stat-card-value-large" id="alltime-focus-time">0h</div>
+          <div class="stat-card-label">Total Focus Time</div>
+        </div>
+        <div class="stat-card stat-card-elevated">
+          <div class="stat-card-value stat-card-value-large" id="alltime-sessions">0</div>
+          <div class="stat-card-label">Total Sessions</div>
+        </div>
+        <div class="stat-card stat-card-elevated">
+          <div class="stat-card-value stat-card-value-large" id="alltime-score">--%</div>
+          <div class="stat-card-label">Average Focus Score</div>
+        </div>
+        <div class="stat-card stat-card-elevated">
+          <div class="stat-card-value stat-card-value-large" id="alltime-streak">0</div>
+          <div class="stat-card-label">Longest Streak</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Top Distracting Sites + Insights (side by side) -->
+    <section class="section">
+      <div class="two-col">
+        <div class="col">
+          <h2 class="section-title">Top Distracting Sites</h2>
+          <div class="card" id="distracting-sites-card">
+            <div class="empty-state" id="distracting-sites-empty">
+              <div class="empty-state-icon">&#128526;</div>
+              <p>No distractions recorded yet. Keep it up!</p>
+            </div>
+            <div id="distracting-sites-list" style="display:none;"></div>
+          </div>
+        </div>
+        <div class="col">
+          <h2 class="section-title">Study Insights</h2>
+          <div class="insights-list" id="insights-list">
+            <div class="insight-card">
+              <div class="insight-icon">&#128161;</div>
+              <div class="insight-text">
+                <div class="insight-title" id="insight-best-time-title">Best Study Time</div>
+                <div class="insight-desc" id="insight-best-time-desc">Complete a few sessions to see your patterns.</div>
+              </div>
+            </div>
+            <div class="insight-card">
+              <div class="insight-icon">&#9203;</div>
+              <div class="insight-text">
+                <div class="insight-title" id="insight-optimal-length-title">Optimal Session Length</div>
+                <div class="insight-desc" id="insight-optimal-length-desc">We'll analyze your data once you have more sessions.</div>
+              </div>
+            </div>
+            <div class="insight-card">
+              <div class="insight-icon">&#128197;</div>
+              <div class="insight-text">
+                <div class="insight-title" id="insight-best-day-title">Most Productive Day</div>
+                <div class="insight-desc" id="insight-best-day-desc">Keep studying to unlock day-of-week patterns.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Angel vs Devil Choices -->
+    <section class="section">
+      <h2 class="section-title">Your Choices</h2>
+      <div class="choices-card" id="choices-card">
+        <div class="choices-bar-container">
+          <div class="choices-side choices-angel">
+            <div class="choices-mascot">&#128519;</div>
+            <div class="choices-label">Angel</div>
+            <div class="choices-count" id="choices-angel-count">0</div>
+          </div>
+          <div class="choices-bar">
+            <div class="choices-bar-fill choices-bar-angel" id="choices-bar-angel" style="width:50%;"></div>
+            <div class="choices-bar-fill choices-bar-devil" id="choices-bar-devil" style="width:50%;"></div>
+          </div>
+          <div class="choices-side choices-devil">
+            <div class="choices-mascot">&#128520;</div>
+            <div class="choices-label">Devil</div>
+            <div class="choices-count" id="choices-devil-count">0</div>
+          </div>
+        </div>
+        <p class="choices-summary" id="choices-summary">Make your first choice during a distraction to see stats here.</p>
+      </div>
+    </section>
+
+    <!-- Session History Table -->
+    <section class="section">
+      <div class="section-header-row">
+        <h2 class="section-title">Session History</h2>
+        <div class="section-actions">
+          <input type="text" class="search-input" id="history-search" placeholder="Search by topic...">
+          <button class="btn-export" id="export-csv-btn">Export CSV</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="table-container" id="history-table-container">
+          <div class="empty-state" id="history-empty">
+            <div class="empty-state-icon">&#128218;</div>
+            <p>No sessions yet. Start your first focus session!</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-inner">
+      <span class="footer-brand">Focus Flow</span>
+      <span class="footer-text">Built with focus. Stay productive.</span>
+    </div>
+  </footer>
+
+  <script src="dist/dashboard.js" type="module"></script>
+</body>
+</html>

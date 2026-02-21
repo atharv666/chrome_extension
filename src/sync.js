@@ -68,6 +68,8 @@ export async function saveSessionToCloud(sessionData) {
     focusScore: sessionData.focusScore,
     distractions: sessionData.distractions,
     distractionTime: sessionData.distractionTime,
+    distractingSites: sessionData.distractingSites || {},
+    choices: sessionData.choices || { angel: 0, devil: 0 },
     createdAt: serverTimestamp(),
   });
 }

@@ -28,6 +28,10 @@ export function initParsingCollector() {
     lastActivityTs: nowTs(),
     mouseEvents: [],
     clickEvents: [],
+    mouseDistanceEvents: [],
+    mouseActiveEvents: [],
+    lastMousePos: null,
+    lastMouseTs: null,
     scrollDistancePx: 0,
     scrollWindowStartTs: nowTs(),
     lastScrollY: window.scrollY,
@@ -46,6 +50,32 @@ export function initParsingCollector() {
     if (type === "click") behavior.clickEvents.push(ts);
   }
 
+  function onMouseMove(event) {
+    const ts = nowTs();
+    markActivity("mousemove");
+
+    const nextPos = { x: event.clientX, y: event.clientY };
+    if (behavior.lastMousePos) {
+      const dx = nextPos.x - behavior.lastMousePos.x;
+      const dy = nextPos.y - behavior.lastMousePos.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (distance > 0) {
+        behavior.mouseDistanceEvents.push({ ts, distance });
+      }
+    }
+
+    if (behavior.lastMouseTs) {
+      const delta = ts - behavior.lastMouseTs;
+      const activeMs = Math.max(0, Math.min(delta, 1000));
+      if (activeMs > 0) {
+        behavior.mouseActiveEvents.push({ ts, activeMs });
+      }
+    }
+
+    behavior.lastMousePos = nextPos;
+    behavior.lastMouseTs = ts;
+  }
+
   function onScroll() {
     markActivity("scroll");
     const currentY = window.scrollY;
@@ -57,6 +87,8 @@ export function initParsingCollector() {
     const threshold = nowTs() - 60000;
     behavior.mouseEvents = behavior.mouseEvents.filter((t) => t >= threshold);
     behavior.clickEvents = behavior.clickEvents.filter((t) => t >= threshold);
+    behavior.mouseDistanceEvents = behavior.mouseDistanceEvents.filter((entry) => entry.ts >= threshold);
+    behavior.mouseActiveEvents = behavior.mouseActiveEvents.filter((entry) => entry.ts >= threshold);
   }
 
   function computeBehaviorMetrics() {
@@ -68,10 +100,26 @@ export function initParsingCollector() {
     behavior.scrollDistancePx = 0;
     behavior.scrollWindowStartTs = now;
 
+    const totalDistancePx = Math.round(
+      behavior.mouseDistanceEvents.reduce((sum, entry) => sum + entry.distance, 0)
+    );
+    const activeMs = behavior.mouseActiveEvents.reduce((sum, entry) => sum + entry.activeMs, 0);
+    const activeRatio = Math.max(0, Math.min(activeMs / 60000, 1));
+
+    const distanceNorm = Math.min(totalDistancePx / 5000, 1);
+    const frequencyNorm = Math.min(behavior.mouseEvents.length / 150, 1);
+    const activeNorm = activeRatio;
+    const mouseScore = Number(
+      (0.5 * distanceNorm + 0.3 * frequencyNorm + 0.2 * activeNorm).toFixed(3)
+    );
+
     return {
       inactivity_seconds: Math.floor((now - behavior.lastActivityTs) / 1000),
       time_on_page_seconds: Math.floor((now - behavior.pageEnterTs) / 1000),
       mouse_events_per_minute: behavior.mouseEvents.length,
+      total_distance_px: totalDistancePx,
+      movement_active_ratio: Number(activeRatio.toFixed(3)),
+      mouse_score: mouseScore,
       clicks_per_minute: behavior.clickEvents.length,
       scroll_speed_px_per_sec: scrollSpeed,
     };
@@ -91,19 +139,19 @@ export function initParsingCollector() {
     const category = categorizeDomain(domain);
     const allowedSites = session?.allowedSites || [];
 
+    const metrics = computeBehaviorMetrics();
+
     return {
       timestamp: nowTs(),
       study_topic: session?.topic || "",
       mode,
-      website: {
-        url: compactUrl(lite.page.url),
-        domain: lite.page.domain,
-        title: lite.page.page_title,
-        category,
-        is_allowed: isAllowedSite(domain, allowedSites),
-      },
+      url: compactUrl(lite.page.url),
+      domain: lite.page.domain,
+      page_title: lite.page.page_title,
+      category,
+      is_allowed: isAllowedSite(domain, allowedSites),
       metadata: lite.metadata,
-      behavior: computeBehaviorMetrics(),
+      ...metrics,
     };
   }
 
@@ -129,12 +177,12 @@ export function initParsingCollector() {
 
     const payload = {
       ...buildLitePayload(session, "batch"),
-      website: {
-        ...general.page,
-        category,
-        is_allowed: isAllowedSite(domain, allowedSites),
-        is_relevant_to_topic: relevance,
-      },
+      url: general.page.url,
+      domain: general.page.domain,
+      page_title: general.page.page_title,
+      category,
+      is_allowed: isAllowedSite(domain, allowedSites),
+      is_relevant_to_topic: relevance,
       metadata: general.metadata,
       content: {
         headings: general.content.top_headings,
@@ -149,7 +197,7 @@ export function initParsingCollector() {
     };
 
     payload.content_hash = simpleHash(
-      `${payload.website.url}|${payload.content.headings.join("|")}|${payload.content.summary}|${JSON.stringify(payload.incremental)}`
+      `${payload.url}|${payload.content.headings.join("|")}|${payload.content.summary}|${JSON.stringify(payload.incremental)}`
     );
     return payload;
   }
@@ -206,7 +254,7 @@ export function initParsingCollector() {
     tracker.start();
     sendImmediate();
 
-    document.addEventListener("mousemove", () => markActivity("mousemove"), true);
+    document.addEventListener("mousemove", onMouseMove, true);
     document.addEventListener("click", () => markActivity("click"), true);
     document.addEventListener("keydown", () => markActivity("keydown"), true);
     document.addEventListener("touchstart", () => markActivity("touchstart"), true);

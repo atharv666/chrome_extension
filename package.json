@@ -1,0 +1,22 @@
+{
+  "name": "focus-flow",
+  "version": "1.0.0",
+  "description": "Focus Flow - Chrome extension for distraction-free studying",
+  "private": true,
+  "scripts": {
+    "build": "node esbuild.config.js",
+    "dev": "node esbuild.config.js --watch",
+    "listen:parse": "node scripts/parse-listener.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/atharv666/chrome_extension.git"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "firebase": "^12.9.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.3"
+  }
+}

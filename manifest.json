@@ -30,7 +30,12 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["dashboard.html", "dashboard.css"],
+      "resources": [
+        "dashboard.html",
+        "dashboard.css",
+        "icons/angel.png",
+        "icons/devil.png"
+      ],
       "matches": ["<all_urls>"]
     }
   ]

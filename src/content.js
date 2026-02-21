@@ -1,4 +1,5 @@
 import { initParsingCollector } from "./parsing/collector.js";
+import gsap from "gsap";
 
 // ===== Focus Flow - Content Script =====
 // Injected into every page. Handles:
@@ -14,6 +15,10 @@ const FF_PRIMARY = "#F47D5B";
 const FF_PRIMARY_HOVER = "#E06A48";
 const FF_BORDER = "#F0EDE9";
 const FF_SUCCESS = "#6BCF7F";
+
+// Mascot image URLs (resolved from extension root)
+const DEVIL_IMG_URL = chrome.runtime.getURL("icons/devil.png");
+const ANGEL_IMG_URL = chrome.runtime.getURL("icons/angel.png");
 
 // ===== State =====
 
@@ -67,6 +72,34 @@ function injectAnimationStyles() {
     @keyframes ffBubbleIn {
       from { opacity: 0; transform: translateY(8px) scale(0.95); }
       to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    /* Responsive mascot sizing */
+    @media (max-width: 600px) {
+      .ff-mascot-img {
+        width: 240px !important;
+        height: 240px !important;
+      }
+      .ff-speech-bubble {
+        max-width: 200px !important;
+        font-size: 13px !important;
+        padding: 10px 13px !important;
+        bottom: 210px !important;
+        left: 8% !important;
+        right: 8% !important;
+      }
+      .ff-mascot-devil {
+        left: 10px !important;
+        bottom: -20px !important;
+      }
+      .ff-mascot-angel {
+        right: 10px !important;
+        bottom: -20px !important;
+      }
+      .ff-choice-prompt {
+        font-size: 14px !important;
+        top: 40px !important;
+      }
     }
   `;
   document.documentElement.appendChild(style);
@@ -565,196 +598,160 @@ function showStage1Overlay() {
 
 // ===== Stage 3: Mascot Intervention =====
 
+function createMascotImage(src, side) {
+  const img = document.createElement("img");
+  img.src = src;
+  img.className = `ff-mascot-img ff-mascot-${side}`;
+  img.draggable = false;
+  Object.assign(img.style, {
+    position: "absolute",
+    bottom: "-40px",
+    [side === "devil" ? "left" : "right"]: "40px",
+    width: "450px",
+    height: "450px",
+    objectFit: "cover",
+    objectPosition: "center bottom",
+    zIndex: "2",
+    userSelect: "none",
+    pointerEvents: "none",
+    // Start hidden below viewport for GSAP entrance
+    opacity: "0",
+    transform: "translateY(500px)",
+  });
+  return img;
+}
+
 function showMascotOverlay() {
   distractionStage = 3;
 
   const overlay = createOverlay(0.75);
+  // Remove flex centering — mascots are absolutely positioned
+  overlay.style.display = "block";
 
-  const card = document.createElement("div");
-  Object.assign(card.style, {
-    background: FF_BG,
-    padding: "32px 28px 28px",
-    borderRadius: "20px",
-    textAlign: "center",
-    boxShadow: "0 24px 80px rgba(0, 0, 0, 0.35)",
-    maxWidth: "440px",
-    width: "92%",
-    animation: "ffScaleIn 0.4s ease",
-    fontFamily: FF_FONT,
-  });
+  // Devil mascot — bottom left
+  const devilImg = createMascotImage(DEVIL_IMG_URL, "devil");
+  overlay.appendChild(devilImg);
 
-  // Mascot header row
-  const mascotRow = document.createElement("div");
-  Object.assign(mascotRow.style, {
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: "24px",
-    marginBottom: "20px",
-  });
+  // Angel mascot — bottom right
+  const angelImg = createMascotImage(ANGEL_IMG_URL, "angel");
+  overlay.appendChild(angelImg);
 
-  // Devil mascot
-  const devil = document.createElement("div");
-  Object.assign(devil.style, { fontSize: "48px", lineHeight: "1" });
-  devil.innerHTML = "&#128520;"; // 😈
-
-  // VS divider
-  const vs = document.createElement("div");
-  Object.assign(vs.style, {
-    fontSize: "12px",
-    fontWeight: "700",
-    color: FF_TEXT_MUTED,
-    textTransform: "uppercase",
-    letterSpacing: "2px",
-  });
-  vs.textContent = "vs";
-
-  // Angel mascot
-  const angel = document.createElement("div");
-  Object.assign(angel.style, { fontSize: "48px", lineHeight: "1" });
-  angel.innerHTML = "&#128519;"; // 😇
-
-  mascotRow.appendChild(devil);
-  mascotRow.appendChild(vs);
-  mascotRow.appendChild(angel);
-  card.appendChild(mascotRow);
-
-  // Conversation area
-  const convoArea = document.createElement("div");
-  convoArea.id = "ff-convo-area";
-  Object.assign(convoArea.style, {
-    minHeight: "160px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-    marginBottom: "20px",
-    padding: "0 4px",
-  });
-  card.appendChild(convoArea);
-
-  // Choice buttons (hidden initially)
-  const choiceRow = document.createElement("div");
-  choiceRow.id = "ff-choice-row";
-  Object.assign(choiceRow.style, {
-    display: "flex",
-    gap: "10px",
-    justifyContent: "center",
-    opacity: "0",
-    transition: "opacity 0.4s ease",
-    pointerEvents: "none",
-  });
-
-  // Devil button
-  const devilBtn = document.createElement("button");
-  Object.assign(devilBtn.style, {
-    flex: "1",
-    padding: "14px 16px",
-    fontSize: "14px",
-    fontWeight: "600",
-    fontFamily: FF_FONT,
-    background: "linear-gradient(135deg, #FF6B6B, #ee5a24)",
-    color: "white",
-    border: "none",
-    borderRadius: "12px",
-    cursor: "pointer",
-    transition: "all 0.25s ease",
-  });
-  devilBtn.innerHTML = "&#128520; Stay distracted";
-  devilBtn.onmouseover = () => {
-    devilBtn.style.transform = "translateY(-2px)";
-    devilBtn.style.boxShadow = "0 6px 20px rgba(238, 90, 36, 0.4)";
-  };
-  devilBtn.onmouseout = () => {
-    devilBtn.style.transform = "translateY(0)";
-    devilBtn.style.boxShadow = "none";
-  };
-  devilBtn.onclick = () => handleMascotChoice("devil");
-
-  // Angel button
-  const angelBtn = document.createElement("button");
-  Object.assign(angelBtn.style, {
-    flex: "1",
-    padding: "14px 16px",
-    fontSize: "14px",
-    fontWeight: "600",
-    fontFamily: FF_FONT,
-    background: `linear-gradient(135deg, ${FF_SUCCESS}, #2ecc71)`,
-    color: "white",
-    border: "none",
-    borderRadius: "12px",
-    cursor: "pointer",
-    transition: "all 0.25s ease",
-  });
-  angelBtn.innerHTML = "&#128519; Get back to work";
-  angelBtn.onmouseover = () => {
-    angelBtn.style.transform = "translateY(-2px)";
-    angelBtn.style.boxShadow = "0 6px 20px rgba(46, 204, 113, 0.4)";
-  };
-  angelBtn.onmouseout = () => {
-    angelBtn.style.transform = "translateY(0)";
-    angelBtn.style.boxShadow = "none";
-  };
-  angelBtn.onclick = () => handleMascotChoice("angel");
-
-  choiceRow.appendChild(devilBtn);
-  choiceRow.appendChild(angelBtn);
-  card.appendChild(choiceRow);
-
-  overlay.appendChild(card);
   document.documentElement.appendChild(overlay);
 
-  // Start conversation animation
-  animateConversation(convoArea, choiceRow);
+  // GSAP entrance animation — dramatic slide up with back-ease overshoot
+  const entranceTL = gsap.timeline({
+    onComplete: () => {
+      // Start idle breathing after entrance completes
+      startBreathing(devilImg);
+      startBreathing(angelImg, 1.5); // Offset angel breathing by 1.5s
+      animateConversation(overlay, devilImg, angelImg);
+    },
+  });
+
+  entranceTL.to(devilImg, {
+    y: 0,
+    opacity: 1,
+    duration: 0.8,
+    ease: "back.out(1.4)",
+  });
+
+  entranceTL.to(
+    angelImg,
+    {
+      y: 0,
+      opacity: 1,
+      duration: 0.8,
+      ease: "back.out(1.4)",
+    },
+    0.1 // Slight stagger — angel starts 0.1s after devil
+  );
+}
+
+// ===== GSAP Breathing Animation =====
+
+function startBreathing(mascot, delay = 0) {
+  // Kill any existing tweens on this mascot before starting breathing
+  gsap.killTweensOf(mascot);
+  mascot._breathingTween = gsap.to(mascot, {
+    scale: 1.02,
+    duration: 1.5,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: -1,
+    delay: delay,
+  });
+}
+
+function stopBreathing(mascot) {
+  if (mascot._breathingTween) {
+    mascot._breathingTween.kill();
+    mascot._breathingTween = null;
+  }
 }
 
 // ===== Mascot Conversation Animation =====
 
+function createBubbleTailSVG(isDevil) {
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "10");
+  svg.setAttribute("viewBox", "0 0 20 10");
+  Object.assign(svg.style, {
+    position: "absolute",
+    bottom: "-9px",
+    [isDevil ? "left" : "right"]: "40px",
+    display: "block",
+  });
+
+  const polygon = document.createElementNS(svgNS, "polygon");
+  polygon.setAttribute("points", isDevil ? "0,0 20,0 4,10" : "0,0 20,0 16,10");
+  polygon.setAttribute("fill", isDevil ? "#FFF0F0" : "#FFF8E7");
+  svg.appendChild(polygon);
+
+  return svg;
+}
+
 function createBubble(speaker, text) {
-  // speaker: "devil" or "angel"
   const isDevil = speaker === "devil";
 
-  const row = document.createElement("div");
-  Object.assign(row.style, {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: "8px",
-    justifyContent: isDevil ? "flex-start" : "flex-end",
-    animation: "ffBubbleIn 0.35s ease",
+  const wrapper = document.createElement("div");
+  wrapper.className = `ff-speech-bubble ff-bubble-${speaker}`;
+  Object.assign(wrapper.style, {
+    position: "absolute",
+    bottom: "410px",
+    [isDevil ? "left" : "right"]: "15%",
+    maxWidth: "300px",
+    zIndex: "3",
+    fontFamily: FF_FONT,
+    // Start hidden for GSAP animation
+    opacity: "0",
+    transform: "scale(0) translateY(20px)",
+    transformOrigin: isDevil ? "bottom left" : "bottom right",
   });
-
-  const emoji = document.createElement("span");
-  Object.assign(emoji.style, {
-    fontSize: "22px",
-    flexShrink: "0",
-    lineHeight: "1.4",
-  });
-  emoji.innerHTML = isDevil ? "&#128520;" : "&#128519;";
 
   const bubble = document.createElement("div");
   Object.assign(bubble.style, {
-    background: isDevil ? "#FFF0F0" : "#EEFBF1",
+    position: "relative",
+    background: isDevil ? "#FFF0F0" : "#FFF8E7",
     color: FF_TEXT,
-    padding: "10px 14px",
-    borderRadius: isDevil ? "4px 14px 14px 14px" : "14px 4px 14px 14px",
-    fontSize: "13px",
-    lineHeight: "1.45",
-    maxWidth: "260px",
+    padding: "16px 22px",
+    borderRadius: "16px",
+    fontSize: "18px",
+    lineHeight: "1.5",
     textAlign: "left",
+    boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
   });
   bubble.textContent = text;
 
-  if (isDevil) {
-    row.appendChild(emoji);
-    row.appendChild(bubble);
-  } else {
-    row.appendChild(bubble);
-    row.appendChild(emoji);
-  }
+  // SVG tail pointing down to mascot
+  bubble.appendChild(createBubbleTailSVG(isDevil));
 
-  return row;
+  wrapper.appendChild(bubble);
+  return wrapper;
 }
 
-function animateConversation(convoArea, choiceRow) {
+function animateConversation(overlay, devilMascot, angelMascot) {
   const topicDisplay = sessionTopic || "your studies";
 
   const script = [
@@ -776,27 +773,501 @@ function animateConversation(convoArea, choiceRow) {
     },
   ];
 
+  let currentBubble = null;
   let i = 0;
-  const interval = setInterval(() => {
+
+  function showNextMessage() {
+    // Remove previous bubble with fade-out
+    if (currentBubble) {
+      const oldBubble = currentBubble;
+      gsap.to(oldBubble, {
+        opacity: 0,
+        scale: 0.8,
+        duration: 0.2,
+        ease: "power2.in",
+        onComplete: () => oldBubble.remove(),
+      });
+      currentBubble = null;
+    }
+
+    // Reset both mascots — resume breathing
+    startBreathing(devilMascot);
+    startBreathing(angelMascot, 1.5);
+
     if (i >= script.length) {
-      clearInterval(interval);
-      // Show choice buttons after conversation ends
+      // Conversation finished — enable mascot choice
       setTimeout(() => {
-        choiceRow.style.opacity = "1";
-        choiceRow.style.pointerEvents = "auto";
-      }, 500);
+        enableMascotChoice(overlay, devilMascot, angelMascot);
+      }, 400);
       return;
     }
 
     const msg = script[i];
-    const bubble = createBubble(msg.speaker, msg.text);
-    convoArea.appendChild(bubble);
+    const isDevil = msg.speaker === "devil";
+    const activeMascot = isDevil ? devilMascot : angelMascot;
 
-    // Scroll conversation area to bottom
-    convoArea.scrollTop = convoArea.scrollHeight;
+    // Stop breathing on active mascot so pop takes effect
+    stopBreathing(activeMascot);
+
+    // Pop active mascot up with elastic bounce
+    gsap.to(activeMascot, {
+      y: -30,
+      scale: 1,
+      duration: 0.6,
+      ease: "elastic.out(1, 0.5)",
+    });
+
+    // Show speech bubble with spring pop-in
+    currentBubble = createBubble(msg.speaker, msg.text);
+    overlay.appendChild(currentBubble);
+
+    gsap.to(currentBubble, {
+      opacity: 1,
+      scale: 1,
+      y: 0,
+      duration: 0.5,
+      ease: "back.out(2)",
+      delay: 0.15, // Slight delay after mascot pop
+    });
 
     i++;
-  }, 2000);
+
+    // Schedule next message
+    setTimeout(showNextMessage, 2500);
+  }
+
+  showNextMessage();
+}
+
+// ===== Background Effects =====
+
+function createFireEffect() {
+  const container = document.createElement("div");
+  Object.assign(container.style, {
+    position: "absolute",
+    left: "0",
+    bottom: "0",
+    width: "50%",
+    height: "100%",
+    zIndex: "1",
+    pointerEvents: "none",
+    opacity: "0",
+    overflow: "hidden",
+  });
+
+  // Base fire glow — radial gradient from bottom-left
+  const baseGlow = document.createElement("div");
+  Object.assign(baseGlow.style, {
+    position: "absolute",
+    left: "-20%",
+    bottom: "-10%",
+    width: "120%",
+    height: "80%",
+    background:
+      "radial-gradient(ellipse at 30% 90%, rgba(255, 69, 0, 0.55) 0%, rgba(255, 140, 0, 0.35) 25%, rgba(255, 60, 0, 0.2) 45%, transparent 65%)",
+    filter: "blur(30px)",
+  });
+  container.appendChild(baseGlow);
+
+  // Secondary ember glow — higher, more diffuse
+  const emberGlow = document.createElement("div");
+  Object.assign(emberGlow.style, {
+    position: "absolute",
+    left: "0",
+    bottom: "0",
+    width: "100%",
+    height: "60%",
+    background:
+      "radial-gradient(ellipse at 40% 100%, rgba(255, 100, 0, 0.3) 0%, rgba(255, 50, 0, 0.15) 30%, transparent 55%)",
+    filter: "blur(40px)",
+  });
+  container.appendChild(emberGlow);
+
+  // Flicker layer — animated opacity for flame-like movement
+  const flickerLayer = document.createElement("div");
+  Object.assign(flickerLayer.style, {
+    position: "absolute",
+    left: "-10%",
+    bottom: "-5%",
+    width: "110%",
+    height: "70%",
+    background:
+      "radial-gradient(ellipse at 25% 95%, rgba(255, 200, 0, 0.4) 0%, rgba(255, 80, 0, 0.25) 20%, transparent 50%)",
+    filter: "blur(25px)",
+  });
+  container.appendChild(flickerLayer);
+
+  // Animate the flicker layer for fire-like movement
+  gsap.to(flickerLayer, {
+    opacity: 0.4,
+    y: -20,
+    scale: 1.08,
+    duration: 0.6,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: -1,
+  });
+
+  // Animate base glow with subtle pulse
+  gsap.to(baseGlow, {
+    opacity: 0.7,
+    scale: 1.04,
+    duration: 1.2,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: -1,
+  });
+
+  // Ember glow drifts upward slowly
+  gsap.to(emberGlow, {
+    y: -15,
+    opacity: 0.6,
+    duration: 2,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: -1,
+  });
+
+  return container;
+}
+
+function createHeavenEffect() {
+  const container = document.createElement("div");
+  Object.assign(container.style, {
+    position: "absolute",
+    right: "0",
+    bottom: "0",
+    width: "50%",
+    height: "100%",
+    zIndex: "1",
+    pointerEvents: "none",
+    opacity: "0",
+    overflow: "hidden",
+  });
+
+  // Base heavenly glow — warm golden radial gradient from bottom-right
+  const baseGlow = document.createElement("div");
+  Object.assign(baseGlow.style, {
+    position: "absolute",
+    right: "-20%",
+    bottom: "-10%",
+    width: "120%",
+    height: "80%",
+    background:
+      "radial-gradient(ellipse at 70% 90%, rgba(255, 255, 255, 0.5) 0%, rgba(255, 223, 150, 0.45) 20%, rgba(255, 200, 80, 0.35) 40%, transparent 60%)",
+    filter: "blur(35px)",
+  });
+  container.appendChild(baseGlow);
+
+  // Rich golden shimmer layer
+  const shimmerLayer = document.createElement("div");
+  Object.assign(shimmerLayer.style, {
+    position: "absolute",
+    right: "0",
+    bottom: "0",
+    width: "100%",
+    height: "70%",
+    background:
+      "radial-gradient(ellipse at 60% 100%, rgba(255, 215, 100, 0.4) 0%, rgba(255, 180, 60, 0.25) 30%, transparent 55%)",
+    filter: "blur(30px)",
+  });
+  container.appendChild(shimmerLayer);
+
+  // Soft white-gold light rays
+  const lightRays = document.createElement("div");
+  Object.assign(lightRays.style, {
+    position: "absolute",
+    right: "10%",
+    bottom: "10%",
+    width: "80%",
+    height: "60%",
+    background:
+      "radial-gradient(ellipse at 65% 85%, rgba(255, 255, 255, 0.4) 0%, rgba(255, 220, 140, 0.2) 30%, transparent 55%)",
+    filter: "blur(20px)",
+  });
+  container.appendChild(lightRays);
+
+  // Animate base glow with soft pulse
+  gsap.to(baseGlow, {
+    opacity: 0.85,
+    scale: 1.06,
+    duration: 2.5,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: -1,
+  });
+
+  // Shimmer layer gentle drift
+  gsap.to(shimmerLayer, {
+    opacity: 0.7,
+    y: -10,
+    duration: 3,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: -1,
+  });
+
+  // Light rays soft pulse
+  gsap.to(lightRays, {
+    opacity: 0.5,
+    scale: 1.1,
+    duration: 2,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: -1,
+    delay: 0.5,
+  });
+
+  return container;
+}
+
+// ===== Choice Visual Indicators =====
+
+function createChoiceArrow(side) {
+  const isDevil = side === "devil";
+
+  const wrapper = document.createElement("div");
+  Object.assign(wrapper.style, {
+    position: "absolute",
+    [isDevil ? "left" : "right"]: "18%",
+    top: "22%",
+    zIndex: "3",
+    pointerEvents: "none",
+    opacity: "0",
+  });
+
+  // SVG downward arrow — clean geometric shape
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("width", "48");
+  svg.setAttribute("height", "64");
+  svg.setAttribute("viewBox", "0 0 48 64");
+
+  const arrow = document.createElementNS(svgNS, "path");
+  // Chevron-style downward arrow
+  arrow.setAttribute("d", "M8 8 L24 28 L40 8 M8 28 L24 48 L40 28");
+  arrow.setAttribute("fill", "none");
+  arrow.setAttribute(
+    "stroke",
+    isDevil ? "rgba(255, 120, 60, 0.9)" : "rgba(255, 215, 100, 0.9)"
+  );
+  arrow.setAttribute("stroke-width", "4");
+  arrow.setAttribute("stroke-linecap", "round");
+  arrow.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(arrow);
+
+  wrapper.appendChild(svg);
+
+  // Label below arrow
+  const label = document.createElement("div");
+  Object.assign(label.style, {
+    fontFamily: FF_FONT,
+    fontSize: "13px",
+    fontWeight: "600",
+    color: isDevil
+      ? "rgba(255, 120, 60, 0.85)"
+      : "rgba(255, 215, 100, 0.85)",
+    textAlign: "center",
+    marginTop: "6px",
+    letterSpacing: "0.5px",
+    textShadow: "0 1px 6px rgba(0, 0, 0, 0.5)",
+  });
+  label.textContent = isDevil ? "Stay here" : "Get back to work";
+  wrapper.appendChild(label);
+
+  return wrapper;
+}
+
+function createChoiceArrows(overlay) {
+  const leftArrow = createChoiceArrow("devil");
+  const rightArrow = createChoiceArrow("angel");
+
+  overlay.appendChild(leftArrow);
+  overlay.appendChild(rightArrow);
+
+  // Staggered fade-in
+  gsap.to(leftArrow, {
+    opacity: 1,
+    duration: 0.6,
+    ease: "power2.out",
+    delay: 0.2,
+  });
+  gsap.to(rightArrow, {
+    opacity: 1,
+    duration: 0.6,
+    ease: "power2.out",
+    delay: 0.4,
+  });
+
+  // Pulsing bounce animation — arrows bob up and down
+  gsap.to(leftArrow, {
+    y: 12,
+    duration: 0.8,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: -1,
+    delay: 0.2,
+  });
+
+  gsap.to(rightArrow, {
+    y: 12,
+    duration: 0.8,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: -1,
+    delay: 0.6, // Offset for alternating feel
+  });
+
+  return { leftArrow, rightArrow };
+}
+
+// ===== Mascot Choice Mode =====
+
+function enableMascotChoice(overlay, devilMascot, angelMascot) {
+  // Show "choose your side" prompt at the top center
+  const prompt = document.createElement("div");
+  prompt.className = "ff-choice-prompt";
+  Object.assign(prompt.style, {
+    position: "absolute",
+    top: "60px",
+    left: "50%",
+    color: "#FFFFFF",
+    fontFamily: FF_FONT,
+    fontSize: "18px",
+    fontWeight: "600",
+    textAlign: "center",
+    letterSpacing: "0.5px",
+    textShadow: "0 2px 8px rgba(0, 0, 0, 0.5)",
+    zIndex: "3",
+    pointerEvents: "none",
+    opacity: "0",
+  });
+  prompt.textContent = "Choose your side";
+  overlay.appendChild(prompt);
+
+  // GSAP fade-in for prompt — use xPercent for centering so GSAP doesn't clobber it
+  gsap.set(prompt, { xPercent: -50 });
+  gsap.to(prompt, {
+    opacity: 0.9,
+    duration: 0.5,
+    ease: "power2.out",
+  });
+
+  // Animated arrows pointing at each mascot
+  const arrows = createChoiceArrows(overlay);
+
+  // Stop breathing animation — GSAP handles everything in choice mode
+  stopBreathing(devilMascot);
+  stopBreathing(angelMascot);
+
+  // Reset mascots to neutral state
+  gsap.to([devilMascot, angelMascot], {
+    scale: 1,
+    y: 0,
+    filter: "none",
+    duration: 0.3,
+    ease: "power2.out",
+  });
+
+  // Background effect containers (positioned behind mascots)
+  const fireEffect = createFireEffect();
+  const heavenEffect = createHeavenEffect();
+  overlay.appendChild(fireEffect);
+  overlay.appendChild(heavenEffect);
+
+  // Create two invisible half-screen zones for hover detection & click
+  const leftZone = document.createElement("div");
+  Object.assign(leftZone.style, {
+    position: "absolute",
+    top: "0",
+    left: "0",
+    width: "50%",
+    height: "100%",
+    cursor: "pointer",
+    zIndex: "4",
+  });
+
+  const rightZone = document.createElement("div");
+  Object.assign(rightZone.style, {
+    position: "absolute",
+    top: "0",
+    right: "0",
+    width: "50%",
+    height: "100%",
+    cursor: "pointer",
+    zIndex: "4",
+  });
+
+  // Left half = devil
+  leftZone.onmouseenter = () => {
+    gsap.to(devilMascot, {
+      scale: 1.12,
+      filter: "drop-shadow(0 0 28px rgba(238, 90, 36, 0.8))",
+      duration: 0.45,
+      ease: "power2.out",
+    });
+    gsap.to(angelMascot, {
+      scale: 0.9,
+      filter: "brightness(0.65)",
+      duration: 0.45,
+      ease: "power2.out",
+    });
+    gsap.to(fireEffect, { opacity: 1, duration: 0.4, ease: "power2.out" });
+    gsap.to(heavenEffect, { opacity: 0, duration: 0.3, ease: "power2.in" });
+  };
+  leftZone.onmouseleave = () => {
+    gsap.to(devilMascot, {
+      scale: 1,
+      filter: "none",
+      duration: 0.35,
+      ease: "power2.inOut",
+    });
+    gsap.to(angelMascot, {
+      scale: 1,
+      filter: "none",
+      duration: 0.35,
+      ease: "power2.inOut",
+    });
+    gsap.to(fireEffect, { opacity: 0, duration: 0.3, ease: "power2.in" });
+  };
+  leftZone.onclick = () => handleMascotChoice("devil");
+
+  // Right half = angel
+  rightZone.onmouseenter = () => {
+    gsap.to(angelMascot, {
+      scale: 1.12,
+      filter: "drop-shadow(0 0 28px rgba(255, 200, 60, 0.8))",
+      duration: 0.45,
+      ease: "power2.out",
+    });
+    gsap.to(devilMascot, {
+      scale: 0.9,
+      filter: "brightness(0.65)",
+      duration: 0.45,
+      ease: "power2.out",
+    });
+    gsap.to(heavenEffect, { opacity: 1, duration: 0.4, ease: "power2.out" });
+    gsap.to(fireEffect, { opacity: 0, duration: 0.3, ease: "power2.in" });
+  };
+  rightZone.onmouseleave = () => {
+    gsap.to(angelMascot, {
+      scale: 1,
+      filter: "none",
+      duration: 0.35,
+      ease: "power2.inOut",
+    });
+    gsap.to(devilMascot, {
+      scale: 1,
+      filter: "none",
+      duration: 0.35,
+      ease: "power2.inOut",
+    });
+    gsap.to(heavenEffect, { opacity: 0, duration: 0.3, ease: "power2.in" });
+  };
+  rightZone.onclick = () => handleMascotChoice("angel");
+
+  overlay.appendChild(leftZone);
+  overlay.appendChild(rightZone);
 }
 
 // ===== Mascot Choice Handlers =====

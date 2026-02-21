@@ -7,6 +7,7 @@ import gsap from "gsap";
 // 2. Progressive distraction intervention (timer → popup → mascots)
 
 const FF_FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+const FF_DIALOG_FONT = "'Avenir Next', 'Segoe UI', 'Trebuchet MS', sans-serif";
 const FF_BG = "#FFFCF9";
 const FF_TEXT = "#2D2D2D";
 const FF_TEXT_LIGHT = "#7A7A7A";
@@ -89,12 +90,23 @@ function injectAnimationStyles() {
         height: 240px !important;
       }
       .ff-speech-bubble {
-        max-width: 200px !important;
-        font-size: 13px !important;
+        max-width: 240px !important;
+        font-size: 16px !important;
         padding: 10px 13px !important;
-        bottom: 210px !important;
-        left: 8% !important;
-        right: 8% !important;
+        bottom: 220px !important;
+        left: 50% !important;
+        right: auto !important;
+        transform: translateX(-50%) !important;
+      }
+      .ff-bubble-angel {
+        left: 50% !important;
+        right: auto !important;
+        transform: translateX(-50%) !important;
+      }
+      .ff-bubble-devil {
+        left: 50% !important;
+        right: auto !important;
+        transform: translateX(-50%) !important;
       }
       .ff-mascot-devil {
         left: 10px !important;
@@ -107,6 +119,12 @@ function injectAnimationStyles() {
       .ff-choice-prompt {
         font-size: 14px !important;
         top: 40px !important;
+      }
+      .ff-choice-arrow-left {
+        left: 16% !important;
+      }
+      .ff-choice-arrow-right {
+        right: 16% !important;
       }
     }
   `;
@@ -744,8 +762,8 @@ function createBubble(speaker, text) {
   Object.assign(wrapper.style, {
     position: "absolute",
     bottom: "410px",
-    [isDevil ? "left" : "right"]: "15%",
-    maxWidth: "300px",
+    [isDevil ? "left" : "right"]: "50%",
+    maxWidth: "380px",
     zIndex: "3",
     fontFamily: FF_FONT,
     // Start hidden for GSAP animation
@@ -754,15 +772,24 @@ function createBubble(speaker, text) {
     transformOrigin: isDevil ? "bottom left" : "bottom right",
   });
 
+  if (isDevil) {
+    wrapper.style.marginLeft = "-380px";
+  } else {
+    wrapper.style.marginRight = "-380px";
+  }
+
   const bubble = document.createElement("div");
   Object.assign(bubble.style, {
     position: "relative",
     background: isDevil ? "#FFF0F0" : "#FFF8E7",
     color: FF_TEXT,
-    padding: "16px 22px",
+    padding: "18px 24px",
     borderRadius: "16px",
-    fontSize: "18px",
-    lineHeight: "1.5",
+    fontFamily: FF_DIALOG_FONT,
+    fontSize: "22px",
+    fontWeight: "600",
+    lineHeight: "1.45",
+    letterSpacing: "0.15px",
     textAlign: "left",
     boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
   });
@@ -1053,12 +1080,13 @@ function createChoiceArrow(side) {
   const wrapper = document.createElement("div");
   Object.assign(wrapper.style, {
     position: "absolute",
-    [isDevil ? "left" : "right"]: "18%",
-    top: "22%",
+    [isDevil ? "left" : "right"]: "11%",
+    top: "11%",
     zIndex: "3",
     pointerEvents: "none",
     opacity: "0",
   });
+  wrapper.className = isDevil ? "ff-choice-arrow-left" : "ff-choice-arrow-right";
 
   // SVG downward arrow — clean geometric shape
   const svgNS = "http://www.w3.org/2000/svg";
@@ -1157,8 +1185,8 @@ function enableMascotChoice(overlay, devilMascot, angelMascot) {
     left: "50%",
     color: "#FFFFFF",
     fontFamily: FF_FONT,
-    fontSize: "18px",
-    fontWeight: "600",
+    fontSize: "22px",
+    fontWeight: "700",
     textAlign: "center",
     letterSpacing: "0.5px",
     textShadow: "0 2px 8px rgba(0, 0, 0, 0.5)",

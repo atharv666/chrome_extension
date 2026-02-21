@@ -249,6 +249,43 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
   tabTracking.tabSwitchCount += 1;
   tabTracking.activeTabId = activeInfo.tabId;
   tabTracking.activeSince = Date.now();
+
+  chrome.tabs.get(activeInfo.tabId, (tab) => {
+    if (!tab?.url) return;
+
+    if (
+      tab.url.startsWith("chrome://") ||
+      tab.url.startsWith("chrome-extension://") ||
+      tab.url.startsWith("about:")
+    ) {
+      return;
+    }
+
+    chrome.storage.local.get(["session"], (res) => {
+      if (!res.session || !res.session.active) return;
+
+      let hostname;
+      try {
+        hostname = new URL(tab.url).hostname;
+      } catch {
+        return;
+      }
+
+      const allowed = res.session.allowedSites || [];
+      const isAllowed = allowed.some((site) => {
+        return hostname === site || hostname.endsWith("." + site);
+      });
+
+      if (!isAllowed) {
+        chrome.tabs
+          .sendMessage(activeInfo.tabId, {
+            action: "block",
+            site: hostname,
+          })
+          .catch(() => {});
+      }
+    });
+  });
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {

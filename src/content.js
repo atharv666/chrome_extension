@@ -32,7 +32,15 @@ const INACTIVITY_LIMIT = 60000; // 60 seconds
 let inactivityRemainingMs = INACTIVITY_LIMIT;
 
 // Distraction state
-let distractionStage = 0; // 0=none, 1=first timer, 2=second timer, 3=mascot shown
+const DISTRACTION_STAGE = {
+  NONE: 0,
+  COUNTDOWN_1: 1,
+  PROMPT_1: 2,
+  COUNTDOWN_2: 3,
+  MASCOT: 4,
+};
+
+let distractionStage = DISTRACTION_STAGE.NONE;
 let distractionCountdown = null;
 let distractionSecondsLeft = 0;
 let currentDistractedSite = null;
@@ -115,6 +123,12 @@ function removeOverlay() {
 function removeTimerNotification() {
   const el = document.getElementById("ff-timer-notif");
   if (el) el.remove();
+}
+
+function ensureCountdownSeconds() {
+  if (!Number.isFinite(distractionSecondsLeft) || distractionSecondsLeft <= 0) {
+    distractionSecondsLeft = DISTRACTION_LIMIT;
+  }
 }
 
 // ===== Utility: Create base overlay =====
@@ -405,11 +419,11 @@ function showInactivityOverlay() {
 // Called by background.js message when user visits a non-allowed site
 function startDistraction(site) {
   // If already tracking distraction on this page, don't restart
-  if (distractionStage > 0 && currentDistractedSite === site) return;
+  if (distractionStage !== DISTRACTION_STAGE.NONE && currentDistractedSite === site) return;
 
   cleanupDistraction();
   currentDistractedSite = site;
-  distractionStage = 1;
+  distractionStage = DISTRACTION_STAGE.COUNTDOWN_1;
   distractionRecorded = false;
 
   // Pause inactivity detection while on distraction site
@@ -421,7 +435,7 @@ function startDistraction(site) {
 }
 
 function cleanupDistraction() {
-  distractionStage = 0;
+  distractionStage = DISTRACTION_STAGE.NONE;
   currentDistractedSite = null;
   distractionSecondsLeft = 0;
   distractionRecorded = false;
@@ -448,13 +462,11 @@ function startDistractionCountdown() {
     distractionRecorded = true;
   }
 
-  if (distractionSecondsLeft <= 0) {
-    distractionSecondsLeft = DISTRACTION_LIMIT;
-  }
+  ensureCountdownSeconds();
   showTimerNotification();
 
   distractionCountdown = setInterval(() => {
-    distractionSecondsLeft--;
+    distractionSecondsLeft = Math.max(0, distractionSecondsLeft - 1);
     updateTimerNotification();
 
     if (distractionSecondsLeft <= 0) {
@@ -474,12 +486,21 @@ function pauseDistractionCountdown() {
 
 function resumeDistractionCountdown() {
   if (!isSessionActive || !pageIsVisible) return;
-  if (!currentDistractedSite || distractionStage === 0 || distractionStage === 3) return;
+  if (
+    !currentDistractedSite ||
+    ![
+      DISTRACTION_STAGE.COUNTDOWN_1,
+      DISTRACTION_STAGE.COUNTDOWN_2,
+    ].includes(distractionStage)
+  ) {
+    return;
+  }
   if (distractionCountdown) return;
 
+  ensureCountdownSeconds();
   showTimerNotification();
   distractionCountdown = setInterval(() => {
-    distractionSecondsLeft--;
+    distractionSecondsLeft = Math.max(0, distractionSecondsLeft - 1);
     updateTimerNotification();
 
     if (distractionSecondsLeft <= 0) {
@@ -492,9 +513,9 @@ function resumeDistractionCountdown() {
 }
 
 function onDistractionTimerEnd() {
-  if (distractionStage === 1) {
+  if (distractionStage === DISTRACTION_STAGE.COUNTDOWN_1) {
     showStage1Overlay();
-  } else if (distractionStage === 2) {
+  } else if (distractionStage === DISTRACTION_STAGE.COUNTDOWN_2) {
     showMascotOverlay();
   }
 }
@@ -540,7 +561,7 @@ function showTimerNotification() {
 function updateTimerNotification() {
   const el = document.getElementById("ff-timer-seconds");
   if (el) {
-    el.textContent = `${distractionSecondsLeft}s`;
+    el.textContent = `${Math.max(0, distractionSecondsLeft)}s`;
     // Pulse effect on last 3 seconds
     if (distractionSecondsLeft <= 3) {
       const notif = document.getElementById("ff-timer-notif");
@@ -555,6 +576,9 @@ function updateTimerNotification() {
 // ===== Stage 1: "Are you still active?" Popup =====
 
 function showStage1Overlay() {
+  distractionStage = DISTRACTION_STAGE.PROMPT_1;
+  removeTimerNotification();
+
   const overlay = createOverlay();
   const card = createCard("380px");
 
@@ -577,7 +601,7 @@ function showStage1Overlay() {
   stayBtn.onclick = () => {
     // User chose to stay distracted → start Stage 2 timer
     overlay.remove();
-    distractionStage = 2;
+    distractionStage = DISTRACTION_STAGE.COUNTDOWN_2;
     distractionSecondsLeft = DISTRACTION_LIMIT;
     startDistractionCountdown();
   };
@@ -622,7 +646,7 @@ function createMascotImage(src, side) {
 }
 
 function showMascotOverlay() {
-  distractionStage = 3;
+  distractionStage = DISTRACTION_STAGE.MASCOT;
 
   const overlay = createOverlay(0.75);
   // Remove flex centering — mascots are absolutely positioned
@@ -1371,7 +1395,9 @@ document.addEventListener("visibilitychange", () => {
   if (!isSessionActive) return;
 
   if (pageIsVisible) {
-    if (distractionStage > 0 && currentDistractedSite) {
+    if (distractionStage === DISTRACTION_STAGE.PROMPT_1 && currentDistractedSite) {
+      showStage1Overlay();
+    } else if (distractionStage !== DISTRACTION_STAGE.NONE && currentDistractedSite) {
       resumeDistractionCountdown();
     } else {
       resumeInactivityTimer();

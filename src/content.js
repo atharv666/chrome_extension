@@ -73,24 +73,24 @@ function injectAnimationStyles() {
     /* Responsive mascot sizing */
     @media (max-width: 600px) {
       .ff-mascot-img {
-        width: 180px !important;
-        height: 180px !important;
+        width: 240px !important;
+        height: 240px !important;
       }
       .ff-speech-bubble {
-        max-width: 180px !important;
-        font-size: 11px !important;
-        padding: 9px 11px !important;
-        bottom: 180px !important;
+        max-width: 200px !important;
+        font-size: 13px !important;
+        padding: 10px 13px !important;
+        bottom: 210px !important;
         left: 8% !important;
         right: 8% !important;
       }
       .ff-mascot-devil {
         left: 10px !important;
-        bottom: 0 !important;
+        bottom: -20px !important;
       }
       .ff-mascot-angel {
         right: 10px !important;
-        bottom: 0 !important;
+        bottom: -20px !important;
       }
       .ff-choice-prompt {
         font-size: 14px !important;
@@ -535,10 +535,10 @@ function createMascotImage(src, side) {
   img.draggable = false;
   Object.assign(img.style, {
     position: "absolute",
-    bottom: "0",
+    bottom: "-40px",
     [side === "devil" ? "left" : "right"]: "40px",
-    width: "340px",
-    height: "340px",
+    width: "450px",
+    height: "450px",
     objectFit: "cover",
     objectPosition: "center bottom",
     zIndex: "2",
@@ -546,7 +546,7 @@ function createMascotImage(src, side) {
     pointerEvents: "none",
     // Start hidden below viewport for GSAP entrance
     opacity: "0",
-    transform: "translateY(400px)",
+    transform: "translateY(500px)",
   });
   return img;
 }
@@ -649,7 +649,7 @@ function createBubble(speaker, text) {
   wrapper.className = `ff-speech-bubble ff-bubble-${speaker}`;
   Object.assign(wrapper.style, {
     position: "absolute",
-    bottom: "340px",
+    bottom: "410px",
     [isDevil ? "left" : "right"]: "15%",
     maxWidth: "300px",
     zIndex: "3",
@@ -665,9 +665,9 @@ function createBubble(speaker, text) {
     position: "relative",
     background: isDevil ? "#FFF0F0" : "#EEFBF1",
     color: FF_TEXT,
-    padding: "14px 18px",
-    borderRadius: "14px",
-    fontSize: "14px",
+    padding: "16px 22px",
+    borderRadius: "16px",
+    fontSize: "18px",
     lineHeight: "1.5",
     textAlign: "left",
     boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
@@ -875,7 +875,7 @@ function createHeavenEffect() {
     overflow: "hidden",
   });
 
-  // Base heavenly glow — radial gradient from bottom-right
+  // Base heavenly glow — warm golden radial gradient from bottom-right
   const baseGlow = document.createElement("div");
   Object.assign(baseGlow.style, {
     position: "absolute",
@@ -884,12 +884,12 @@ function createHeavenEffect() {
     width: "120%",
     height: "80%",
     background:
-      "radial-gradient(ellipse at 70% 90%, rgba(255, 255, 255, 0.5) 0%, rgba(173, 216, 230, 0.35) 20%, rgba(255, 215, 0, 0.2) 40%, transparent 60%)",
+      "radial-gradient(ellipse at 70% 90%, rgba(255, 255, 255, 0.5) 0%, rgba(255, 223, 150, 0.45) 20%, rgba(255, 200, 80, 0.35) 40%, transparent 60%)",
     filter: "blur(35px)",
   });
   container.appendChild(baseGlow);
 
-  // Golden shimmer layer
+  // Rich golden shimmer layer
   const shimmerLayer = document.createElement("div");
   Object.assign(shimmerLayer.style, {
     position: "absolute",
@@ -898,12 +898,12 @@ function createHeavenEffect() {
     width: "100%",
     height: "70%",
     background:
-      "radial-gradient(ellipse at 60% 100%, rgba(255, 223, 100, 0.3) 0%, rgba(200, 230, 255, 0.2) 30%, transparent 55%)",
+      "radial-gradient(ellipse at 60% 100%, rgba(255, 215, 100, 0.4) 0%, rgba(255, 180, 60, 0.25) 30%, transparent 55%)",
     filter: "blur(30px)",
   });
   container.appendChild(shimmerLayer);
 
-  // Soft white light rays
+  // Soft white-gold light rays
   const lightRays = document.createElement("div");
   Object.assign(lightRays.style, {
     position: "absolute",
@@ -912,7 +912,7 @@ function createHeavenEffect() {
     width: "80%",
     height: "60%",
     background:
-      "radial-gradient(ellipse at 65% 85%, rgba(255, 255, 255, 0.35) 0%, rgba(200, 220, 255, 0.15) 30%, transparent 55%)",
+      "radial-gradient(ellipse at 65% 85%, rgba(255, 255, 255, 0.4) 0%, rgba(255, 220, 140, 0.2) 30%, transparent 55%)",
     filter: "blur(20px)",
   });
   container.appendChild(lightRays);
@@ -951,6 +951,106 @@ function createHeavenEffect() {
   return container;
 }
 
+// ===== Choice Visual Indicators =====
+
+function createChoiceArrow(side) {
+  const isDevil = side === "devil";
+
+  const wrapper = document.createElement("div");
+  Object.assign(wrapper.style, {
+    position: "absolute",
+    [isDevil ? "left" : "right"]: "18%",
+    top: "32%",
+    zIndex: "3",
+    pointerEvents: "none",
+    opacity: "0",
+  });
+
+  // SVG downward arrow — clean geometric shape
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("width", "48");
+  svg.setAttribute("height", "64");
+  svg.setAttribute("viewBox", "0 0 48 64");
+
+  const arrow = document.createElementNS(svgNS, "path");
+  // Chevron-style downward arrow
+  arrow.setAttribute("d", "M8 8 L24 28 L40 8 M8 28 L24 48 L40 28");
+  arrow.setAttribute("fill", "none");
+  arrow.setAttribute(
+    "stroke",
+    isDevil ? "rgba(255, 120, 60, 0.9)" : "rgba(255, 215, 100, 0.9)"
+  );
+  arrow.setAttribute("stroke-width", "4");
+  arrow.setAttribute("stroke-linecap", "round");
+  arrow.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(arrow);
+
+  wrapper.appendChild(svg);
+
+  // Label below arrow
+  const label = document.createElement("div");
+  Object.assign(label.style, {
+    fontFamily: FF_FONT,
+    fontSize: "13px",
+    fontWeight: "600",
+    color: isDevil
+      ? "rgba(255, 120, 60, 0.85)"
+      : "rgba(255, 215, 100, 0.85)",
+    textAlign: "center",
+    marginTop: "6px",
+    letterSpacing: "0.5px",
+    textShadow: "0 1px 6px rgba(0, 0, 0, 0.5)",
+  });
+  label.textContent = isDevil ? "Stay here" : "Get back to work";
+  wrapper.appendChild(label);
+
+  return wrapper;
+}
+
+function createChoiceArrows(overlay) {
+  const leftArrow = createChoiceArrow("devil");
+  const rightArrow = createChoiceArrow("angel");
+
+  overlay.appendChild(leftArrow);
+  overlay.appendChild(rightArrow);
+
+  // Staggered fade-in
+  gsap.to(leftArrow, {
+    opacity: 1,
+    duration: 0.6,
+    ease: "power2.out",
+    delay: 0.2,
+  });
+  gsap.to(rightArrow, {
+    opacity: 1,
+    duration: 0.6,
+    ease: "power2.out",
+    delay: 0.4,
+  });
+
+  // Pulsing bounce animation — arrows bob up and down
+  gsap.to(leftArrow, {
+    y: 12,
+    duration: 0.8,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: -1,
+    delay: 0.2,
+  });
+
+  gsap.to(rightArrow, {
+    y: 12,
+    duration: 0.8,
+    ease: "sine.inOut",
+    yoyo: true,
+    repeat: -1,
+    delay: 0.6, // Offset for alternating feel
+  });
+
+  return { leftArrow, rightArrow };
+}
+
 // ===== Mascot Choice Mode =====
 
 function enableMascotChoice(overlay, devilMascot, angelMascot) {
@@ -961,7 +1061,6 @@ function enableMascotChoice(overlay, devilMascot, angelMascot) {
     position: "absolute",
     top: "60px",
     left: "50%",
-    transform: "translateX(-50%)",
     color: "#FFFFFF",
     fontFamily: FF_FONT,
     fontSize: "18px",
@@ -976,13 +1075,16 @@ function enableMascotChoice(overlay, devilMascot, angelMascot) {
   prompt.textContent = "Choose your side";
   overlay.appendChild(prompt);
 
-  // GSAP fade-in for prompt
+  // GSAP fade-in for prompt — use xPercent for centering so GSAP doesn't clobber it
+  gsap.set(prompt, { xPercent: -50 });
   gsap.to(prompt, {
     opacity: 0.9,
-    y: 0,
     duration: 0.5,
     ease: "power2.out",
   });
+
+  // Animated arrows pointing at each mascot
+  const arrows = createChoiceArrows(overlay);
 
   // Stop breathing animation — GSAP handles everything in choice mode
   stopBreathing(devilMascot);

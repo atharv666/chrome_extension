@@ -69,7 +69,7 @@ function injectAnimationStyles() {
       to { opacity: 1; transform: translateY(0) scale(1); }
     }
     @keyframes ffMascotEnter {
-      from { opacity: 0; transform: translateY(160px); }
+      from { opacity: 0; transform: translateY(450px); }
       to { opacity: 1; transform: translateY(0); }
     }
     @keyframes ffMascotBounce {
@@ -90,32 +90,32 @@ function injectAnimationStyles() {
     /* Responsive mascot sizing */
     @media (max-width: 600px) {
       .ff-mascot-img {
-        width: 100px !important;
-        height: 100px !important;
+        width: 220px !important;
+        height: 220px !important;
       }
       .ff-speech-bubble {
         max-width: 200px !important;
         font-size: 12px !important;
         padding: 10px 12px !important;
+        bottom: 220px !important;
       }
       .ff-mascot-devil {
-        left: 16px !important;
-        bottom: 20px !important;
+        left: -5px !important;
+        bottom: -5px !important;
       }
       .ff-mascot-angel {
-        right: 16px !important;
-        bottom: 20px !important;
+        right: -5px !important;
+        bottom: -5px !important;
       }
       .ff-bubble-devil {
-        left: 16px !important;
-        bottom: 140px !important;
+        left: 10px !important;
       }
       .ff-bubble-angel {
-        right: 16px !important;
-        bottom: 140px !important;
+        right: 10px !important;
       }
       .ff-choice-prompt {
-        font-size: 13px !important;
+        font-size: 14px !important;
+        top: 40px !important;
       }
     }
   `;
@@ -556,12 +556,12 @@ function createMascotImage(src, side) {
   img.draggable = false;
   Object.assign(img.style, {
     position: "absolute",
-    bottom: "30px",
-    [side === "devil" ? "left" : "right"]: "40px",
-    width: "140px",
-    height: "140px",
+    bottom: "-10px",
+    [side === "devil" ? "left" : "right"]: "-10px",
+    width: "420px",
+    height: "420px",
     objectFit: "contain",
-    animation: "ffMascotEnter 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards",
+    animation: "ffMascotEnter 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards",
     transition: "transform 0.35s ease, filter 0.35s ease",
     zIndex: "2",
     userSelect: "none",
@@ -623,9 +623,9 @@ function createBubble(speaker, text) {
   wrapper.className = `ff-speech-bubble ff-bubble-${speaker}`;
   Object.assign(wrapper.style, {
     position: "absolute",
-    bottom: "185px",
-    [isDevil ? "left" : "right"]: "40px",
-    maxWidth: "280px",
+    bottom: "410px",
+    [isDevil ? "left" : "right"]: "30px",
+    maxWidth: "300px",
     zIndex: "3",
     animation: "ffBubbleIn 0.35s ease forwards",
     opacity: "0",
@@ -637,9 +637,9 @@ function createBubble(speaker, text) {
     position: "relative",
     background: isDevil ? "#FFF0F0" : "#EEFBF1",
     color: FF_TEXT,
-    padding: "12px 16px",
+    padding: "14px 18px",
     borderRadius: "14px",
-    fontSize: "13px",
+    fontSize: "14px",
     lineHeight: "1.5",
     textAlign: "left",
     boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
@@ -702,7 +702,7 @@ function animateConversation(overlay, devilMascot, angelMascot) {
     const activeMascot = isDevil ? devilMascot : angelMascot;
 
     // Pop active mascot up
-    activeMascot.style.transform = "translateY(-25px)";
+    activeMascot.style.transform = "translateY(-35px)";
 
     // Show speech bubble above mascot
     currentBubble = createBubble(msg.speaker, msg.text);
@@ -711,7 +711,7 @@ function animateConversation(overlay, devilMascot, angelMascot) {
     i++;
 
     // Schedule next message
-    setTimeout(showNextMessage, 1500);
+    setTimeout(showNextMessage, 2500);
   }
 
   showNextMessage();
@@ -720,17 +720,17 @@ function animateConversation(overlay, devilMascot, angelMascot) {
 // ===== Mascot Choice Mode =====
 
 function enableMascotChoice(overlay, devilMascot, angelMascot) {
-  // Show "choose your side" prompt
+  // Show "choose your side" prompt at the top center
   const prompt = document.createElement("div");
   prompt.className = "ff-choice-prompt";
   Object.assign(prompt.style, {
     position: "absolute",
-    bottom: "185px",
+    top: "60px",
     left: "50%",
     transform: "translateX(-50%)",
     color: "#FFFFFF",
     fontFamily: FF_FONT,
-    fontSize: "15px",
+    fontSize: "18px",
     fontWeight: "600",
     textAlign: "center",
     letterSpacing: "0.5px",
@@ -742,46 +742,63 @@ function enableMascotChoice(overlay, devilMascot, angelMascot) {
   prompt.textContent = "Choose your side";
   overlay.appendChild(prompt);
 
-  // Enable both mascots as clickable
-  [devilMascot, angelMascot].forEach((mascot) => {
-    mascot.style.pointerEvents = "auto";
-    mascot.style.cursor = "pointer";
-    mascot.style.transform = "translateY(0)";
+  // Create two invisible half-screen zones for hover detection & click
+  const leftZone = document.createElement("div");
+  Object.assign(leftZone.style, {
+    position: "absolute",
+    top: "0",
+    left: "0",
+    width: "50%",
+    height: "100%",
+    cursor: "pointer",
+    zIndex: "4",
   });
 
-  // Devil hover & click
-  devilMascot.onmouseenter = () => {
+  const rightZone = document.createElement("div");
+  Object.assign(rightZone.style, {
+    position: "absolute",
+    top: "0",
+    right: "0",
+    width: "50%",
+    height: "100%",
+    cursor: "pointer",
+    zIndex: "4",
+  });
+
+  // Left half = devil
+  leftZone.onmouseenter = () => {
     devilMascot.style.transform = "scale(1.08)";
     devilMascot.style.filter =
-      "drop-shadow(0 0 18px rgba(238, 90, 36, 0.6))";
-    // Shrink angel slightly to emphasise contrast
-    angelMascot.style.transform = "scale(0.95)";
-    angelMascot.style.filter = "brightness(0.8)";
+      "drop-shadow(0 0 24px rgba(238, 90, 36, 0.7))";
+    angelMascot.style.transform = "scale(0.92)";
+    angelMascot.style.filter = "brightness(0.7)";
   };
-  devilMascot.onmouseleave = () => {
+  leftZone.onmouseleave = () => {
     devilMascot.style.transform = "scale(1)";
     devilMascot.style.filter = "none";
     angelMascot.style.transform = "scale(1)";
     angelMascot.style.filter = "none";
   };
-  devilMascot.onclick = () => handleMascotChoice("devil");
+  leftZone.onclick = () => handleMascotChoice("devil");
 
-  // Angel hover & click
-  angelMascot.onmouseenter = () => {
+  // Right half = angel
+  rightZone.onmouseenter = () => {
     angelMascot.style.transform = "scale(1.08)";
     angelMascot.style.filter =
-      "drop-shadow(0 0 18px rgba(46, 204, 113, 0.6))";
-    // Shrink devil slightly
-    devilMascot.style.transform = "scale(0.95)";
-    devilMascot.style.filter = "brightness(0.8)";
+      "drop-shadow(0 0 24px rgba(46, 204, 113, 0.7))";
+    devilMascot.style.transform = "scale(0.92)";
+    devilMascot.style.filter = "brightness(0.7)";
   };
-  angelMascot.onmouseleave = () => {
+  rightZone.onmouseleave = () => {
     angelMascot.style.transform = "scale(1)";
     angelMascot.style.filter = "none";
     devilMascot.style.transform = "scale(1)";
     devilMascot.style.filter = "none";
   };
-  angelMascot.onclick = () => handleMascotChoice("angel");
+  rightZone.onclick = () => handleMascotChoice("angel");
+
+  overlay.appendChild(leftZone);
+  overlay.appendChild(rightZone);
 }
 
 // ===== Mascot Choice Handlers =====

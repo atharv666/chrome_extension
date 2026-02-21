@@ -25,12 +25,14 @@ const ANGEL_IMG_URL = chrome.runtime.getURL("icons/angel.png");
 
 let isSessionActive = false;
 let sessionTopic = "";
+let currentAllowedSites = [];
+let isCurrentSiteAllowed = false;
 
 // Inactivity state
 let inactivityTimer = null;
 let lastActivity = Date.now();
-const INACTIVITY_LIMIT = 60000; // 60 seconds
-let inactivityRemainingMs = INACTIVITY_LIMIT;
+const ALLOWED_SITE_IDLE_LIMIT = 30000; // 30 seconds
+let inactivityRemainingMs = ALLOWED_SITE_IDLE_LIMIT;
 
 // Distraction state
 const DISTRACTION_STAGE = {
@@ -147,6 +149,31 @@ function ensureCountdownSeconds() {
   if (!Number.isFinite(distractionSecondsLeft) || distractionSecondsLeft <= 0) {
     distractionSecondsLeft = DISTRACTION_LIMIT;
   }
+}
+
+function getCurrentHostname() {
+  try {
+    return new URL(window.location.href).hostname;
+  } catch {
+    return "";
+  }
+}
+
+function matchesAllowedSite(hostname, allowedSites = []) {
+  return allowedSites.some((site) => hostname === site || hostname.endsWith(`.${site}`));
+}
+
+function syncAllowedSiteState() {
+  const hostname = getCurrentHostname();
+  isCurrentSiteAllowed = matchesAllowedSite(hostname, currentAllowedSites);
+}
+
+function refreshInactivityDetection() {
+  if (!isSessionActive || !isCurrentSiteAllowed || distractionStage !== DISTRACTION_STAGE.NONE) {
+    cleanupInactivityDetection();
+    return;
+  }
+  initInactivityDetection();
 }
 
 // ===== Utility: Create base overlay =====
@@ -325,9 +352,9 @@ chrome.storage.local.get(["session"], (res) => {
   if (res.session && res.session.active) {
     isSessionActive = true;
     sessionTopic = res.session.topic || "";
-    // Inactivity detection starts only on allowed sites; distraction
-    // handling is triggered by background "block" messages.
-    initInactivityDetection();
+    currentAllowedSites = res.session.allowedSites || [];
+    syncAllowedSiteState();
+    refreshInactivityDetection();
   }
 });
 
@@ -337,10 +364,14 @@ chrome.storage.onChanged.addListener((changes) => {
     if (s && s.active) {
       isSessionActive = true;
       sessionTopic = s.topic || "";
-      initInactivityDetection();
+      currentAllowedSites = s.allowedSites || [];
+      syncAllowedSiteState();
+      refreshInactivityDetection();
     } else {
       isSessionActive = false;
       sessionTopic = "";
+      currentAllowedSites = [];
+      isCurrentSiteAllowed = false;
       cleanupInactivityDetection();
       cleanupDistraction();
     }
@@ -354,9 +385,9 @@ chrome.storage.onChanged.addListener((changes) => {
 function initInactivityDetection() {
   cleanupInactivityDetection(false);
   lastActivity = Date.now();
-  inactivityRemainingMs = INACTIVITY_LIMIT;
+  inactivityRemainingMs = ALLOWED_SITE_IDLE_LIMIT;
 
-  ["click", "keydown", "scroll", "touchstart", "mousemove"].forEach((ev) => {
+  ["mousemove"].forEach((ev) => {
     document.addEventListener(ev, handleActivity, true);
   });
 
@@ -369,7 +400,7 @@ function cleanupInactivityDetection(removeListeners = true) {
     inactivityTimer = null;
   }
   if (removeListeners) {
-    ["click", "keydown", "scroll", "touchstart", "mousemove"].forEach((ev) => {
+    ["mousemove"].forEach((ev) => {
       document.removeEventListener(ev, handleActivity, true);
     });
   }
@@ -380,12 +411,12 @@ function pauseInactivityTimer() {
   clearTimeout(inactivityTimer);
   inactivityTimer = null;
   const elapsed = Date.now() - lastActivity;
-  inactivityRemainingMs = Math.max(0, INACTIVITY_LIMIT - elapsed);
+  inactivityRemainingMs = Math.max(0, ALLOWED_SITE_IDLE_LIMIT - elapsed);
 }
 
 function resumeInactivityTimer() {
-  if (!isSessionActive || !pageIsVisible) return;
-  if (distractionStage > 0) return;
+  if (!isSessionActive || !pageIsVisible || !isCurrentSiteAllowed) return;
+  if (distractionStage !== DISTRACTION_STAGE.NONE) return;
 
   if (inactivityTimer) clearTimeout(inactivityTimer);
   const delay = Math.max(1, inactivityRemainingMs);
@@ -393,12 +424,12 @@ function resumeInactivityTimer() {
 }
 
 function handleActivity() {
-  if (!pageIsVisible) return;
+  if (!pageIsVisible || !isCurrentSiteAllowed) return;
 
   const now = Date.now();
   if (now - lastActivity < 1000) return;
   lastActivity = now;
-  inactivityRemainingMs = INACTIVITY_LIMIT;
+  inactivityRemainingMs = ALLOWED_SITE_IDLE_LIMIT;
 
   if (inactivityTimer) clearTimeout(inactivityTimer);
   inactivityTimer = setTimeout(showInactivityOverlay, inactivityRemainingMs);
@@ -407,6 +438,8 @@ function handleActivity() {
 function showInactivityOverlay() {
   if (!isSessionActive) return;
   if (!pageIsVisible) return;
+  if (!isCurrentSiteAllowed) return;
+  if (distractionStage !== DISTRACTION_STAGE.NONE) return;
   if (document.getElementById("ff-overlay")) return;
 
   const overlay = createOverlay();
@@ -420,7 +453,7 @@ function showInactivityOverlay() {
   btn.onclick = () => {
     overlay.remove();
     lastActivity = Date.now();
-    inactivityRemainingMs = INACTIVITY_LIMIT;
+    inactivityRemainingMs = ALLOWED_SITE_IDLE_LIMIT;
     if (inactivityTimer) clearTimeout(inactivityTimer);
     inactivityTimer = setTimeout(showInactivityOverlay, inactivityRemainingMs);
   };
@@ -600,11 +633,11 @@ function showStage1Overlay() {
   const overlay = createOverlay();
   const card = createCard("380px");
 
-  card.appendChild(createIcon("&#128564;", "#FFF0EB")); // 💤 sleeping face
-  card.appendChild(createHeading("Still active?"));
+  card.appendChild(createIcon("&#129300;", "#FFF0EB")); // 🤔 thinking face
+  card.appendChild(createHeading("Are you sure you want to waste more study time?"));
 
   const desc = createParagraph(
-    `You've been on ${currentDistractedSite} for ${DISTRACTION_LIMIT} seconds. Getting sidetracked?`
+    `You've already spent ${DISTRACTION_LIMIT} seconds on ${currentDistractedSite}. Keep going, or get back to ${sessionTopic || "your studies"}?`
   );
   card.appendChild(desc);
 
@@ -1389,10 +1422,7 @@ function showShameScreen() {
       });
     }
     cleanupDistraction();
-    // Re-init inactivity detection now that user is on a (newly) allowed site
-    if (isSessionActive) {
-      initInactivityDetection();
-    }
+    // storage.onChanged will re-evaluate allowed-site status and start idle timer.
   };
 
   card.appendChild(btn);

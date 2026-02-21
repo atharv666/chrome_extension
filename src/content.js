@@ -69,14 +69,12 @@ function injectAnimationStyles() {
       to { opacity: 1; transform: translateY(0) scale(1); }
     }
     @keyframes ffMascotEnter {
-      from { opacity: 0; transform: translateY(450px); }
+      from { opacity: 0; transform: translateY(360px); }
       to { opacity: 1; transform: translateY(0); }
     }
-    @keyframes ffMascotBounce {
-      0% { transform: translateY(0); }
-      40% { transform: translateY(-28px); }
-      60% { transform: translateY(-24px); }
-      100% { transform: translateY(-25px); }
+    @keyframes ffMascotBreathe {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.02); }
     }
     @keyframes ffMascotPulseGlow {
       0%, 100% { filter: drop-shadow(0 0 12px rgba(244, 125, 91, 0.4)); }
@@ -90,28 +88,24 @@ function injectAnimationStyles() {
     /* Responsive mascot sizing */
     @media (max-width: 600px) {
       .ff-mascot-img {
-        width: 220px !important;
-        height: 220px !important;
+        width: 180px !important;
+        height: 180px !important;
       }
       .ff-speech-bubble {
-        max-width: 200px !important;
-        font-size: 12px !important;
-        padding: 10px 12px !important;
-        bottom: 220px !important;
+        max-width: 180px !important;
+        font-size: 11px !important;
+        padding: 9px 11px !important;
+        bottom: 180px !important;
+        left: 8% !important;
+        right: 8% !important;
       }
       .ff-mascot-devil {
-        left: -5px !important;
+        left: 10px !important;
         bottom: -5px !important;
       }
       .ff-mascot-angel {
-        right: -5px !important;
-        bottom: -5px !important;
-      }
-      .ff-bubble-devil {
-        left: 10px !important;
-      }
-      .ff-bubble-angel {
         right: 10px !important;
+        bottom: -5px !important;
       }
       .ff-choice-prompt {
         font-size: 14px !important;
@@ -557,12 +551,12 @@ function createMascotImage(src, side) {
   Object.assign(img.style, {
     position: "absolute",
     bottom: "-10px",
-    [side === "devil" ? "left" : "right"]: "-10px",
-    width: "420px",
-    height: "420px",
+    [side === "devil" ? "left" : "right"]: "40px",
+    width: "340px",
+    height: "340px",
     objectFit: "contain",
     animation: "ffMascotEnter 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards",
-    transition: "transform 0.35s ease, filter 0.35s ease",
+    transition: "transform 0.45s cubic-bezier(0.4, 0, 0.2, 1), filter 0.45s cubic-bezier(0.4, 0, 0.2, 1)",
     zIndex: "2",
     userSelect: "none",
     pointerEvents: "none",
@@ -587,8 +581,10 @@ function showMascotOverlay() {
 
   document.documentElement.appendChild(overlay);
 
-  // Wait for entrance animation to finish, then start conversation
+  // After entrance animation, apply idle breathing and start conversation
   setTimeout(() => {
+    devilImg.style.animation = "ffMascotBreathe 3s ease-in-out infinite";
+    angelImg.style.animation = "ffMascotBreathe 3s ease-in-out 1.5s infinite";
     animateConversation(overlay, devilImg, angelImg);
   }, 700);
 }
@@ -604,7 +600,7 @@ function createBubbleTailSVG(isDevil) {
   Object.assign(svg.style, {
     position: "absolute",
     bottom: "-9px",
-    [isDevil ? "left" : "right"]: "20px",
+    [isDevil ? "left" : "right"]: "40px",
     display: "block",
   });
 
@@ -623,8 +619,8 @@ function createBubble(speaker, text) {
   wrapper.className = `ff-speech-bubble ff-bubble-${speaker}`;
   Object.assign(wrapper.style, {
     position: "absolute",
-    bottom: "410px",
-    [isDevil ? "left" : "right"]: "30px",
+    bottom: "340px",
+    [isDevil ? "left" : "right"]: "15%",
     maxWidth: "300px",
     zIndex: "3",
     animation: "ffBubbleIn 0.35s ease forwards",
@@ -685,9 +681,9 @@ function animateConversation(overlay, devilMascot, angelMascot) {
       currentBubble = null;
     }
 
-    // Reset both mascots to resting position
-    devilMascot.style.transform = "translateY(0)";
-    angelMascot.style.transform = "translateY(0)";
+    // Reset both mascots — resume breathing
+    devilMascot.style.animation = "ffMascotBreathe 3s ease-in-out infinite";
+    angelMascot.style.animation = "ffMascotBreathe 3s ease-in-out 1.5s infinite";
 
     if (i >= script.length) {
       // Conversation finished — enable mascot choice
@@ -701,8 +697,10 @@ function animateConversation(overlay, devilMascot, angelMascot) {
     const isDevil = msg.speaker === "devil";
     const activeMascot = isDevil ? devilMascot : angelMascot;
 
+    // Stop breathing on active mascot so transform takes effect
+    activeMascot.style.animation = "none";
     // Pop active mascot up
-    activeMascot.style.transform = "translateY(-35px)";
+    activeMascot.style.transform = "translateY(-30px)";
 
     // Show speech bubble above mascot
     currentBubble = createBubble(msg.speaker, msg.text);
@@ -742,6 +740,10 @@ function enableMascotChoice(overlay, devilMascot, angelMascot) {
   prompt.textContent = "Choose your side";
   overlay.appendChild(prompt);
 
+  // Stop breathing animation so it doesn't conflict with hover transforms
+  devilMascot.style.animation = "none";
+  angelMascot.style.animation = "none";
+
   // Create two invisible half-screen zones for hover detection & click
   const leftZone = document.createElement("div");
   Object.assign(leftZone.style, {
@@ -767,11 +769,11 @@ function enableMascotChoice(overlay, devilMascot, angelMascot) {
 
   // Left half = devil
   leftZone.onmouseenter = () => {
-    devilMascot.style.transform = "scale(1.08)";
+    devilMascot.style.transform = "scale(1.12)";
     devilMascot.style.filter =
-      "drop-shadow(0 0 24px rgba(238, 90, 36, 0.7))";
-    angelMascot.style.transform = "scale(0.92)";
-    angelMascot.style.filter = "brightness(0.7)";
+      "drop-shadow(0 0 28px rgba(238, 90, 36, 0.8))";
+    angelMascot.style.transform = "scale(0.90)";
+    angelMascot.style.filter = "brightness(0.65)";
   };
   leftZone.onmouseleave = () => {
     devilMascot.style.transform = "scale(1)";
@@ -783,11 +785,11 @@ function enableMascotChoice(overlay, devilMascot, angelMascot) {
 
   // Right half = angel
   rightZone.onmouseenter = () => {
-    angelMascot.style.transform = "scale(1.08)";
+    angelMascot.style.transform = "scale(1.12)";
     angelMascot.style.filter =
-      "drop-shadow(0 0 24px rgba(46, 204, 113, 0.7))";
-    devilMascot.style.transform = "scale(0.92)";
-    devilMascot.style.filter = "brightness(0.7)";
+      "drop-shadow(0 0 28px rgba(46, 204, 113, 0.8))";
+    devilMascot.style.transform = "scale(0.90)";
+    devilMascot.style.filter = "brightness(0.65)";
   };
   rightZone.onmouseleave = () => {
     angelMascot.style.transform = "scale(1)";

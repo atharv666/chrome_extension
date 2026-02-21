@@ -15,6 +15,10 @@ const FF_PRIMARY_HOVER = "#E06A48";
 const FF_BORDER = "#F0EDE9";
 const FF_SUCCESS = "#6BCF7F";
 
+// Mascot image URLs (resolved from extension root)
+const DEVIL_IMG_URL = chrome.runtime.getURL("icons/devil.png");
+const ANGEL_IMG_URL = chrome.runtime.getURL("icons/angel.png");
+
 // ===== State =====
 
 let isSessionActive = false;
@@ -63,6 +67,56 @@ function injectAnimationStyles() {
     @keyframes ffBubbleIn {
       from { opacity: 0; transform: translateY(8px) scale(0.95); }
       to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes ffMascotEnter {
+      from { opacity: 0; transform: translateY(160px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes ffMascotBounce {
+      0% { transform: translateY(0); }
+      40% { transform: translateY(-28px); }
+      60% { transform: translateY(-24px); }
+      100% { transform: translateY(-25px); }
+    }
+    @keyframes ffMascotPulseGlow {
+      0%, 100% { filter: drop-shadow(0 0 12px rgba(244, 125, 91, 0.4)); }
+      50% { filter: drop-shadow(0 0 20px rgba(244, 125, 91, 0.7)); }
+    }
+    @keyframes ffChoicePromptFade {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 0.9; transform: translateY(0); }
+    }
+
+    /* Responsive mascot sizing */
+    @media (max-width: 600px) {
+      .ff-mascot-img {
+        width: 100px !important;
+        height: 100px !important;
+      }
+      .ff-speech-bubble {
+        max-width: 200px !important;
+        font-size: 12px !important;
+        padding: 10px 12px !important;
+      }
+      .ff-mascot-devil {
+        left: 16px !important;
+        bottom: 20px !important;
+      }
+      .ff-mascot-angel {
+        right: 16px !important;
+        bottom: 20px !important;
+      }
+      .ff-bubble-devil {
+        left: 16px !important;
+        bottom: 140px !important;
+      }
+      .ff-bubble-angel {
+        right: 16px !important;
+        bottom: 140px !important;
+      }
+      .ff-choice-prompt {
+        font-size: 13px !important;
+      }
     }
   `;
   document.documentElement.appendChild(style);
@@ -495,196 +549,111 @@ function showStage1Overlay() {
 
 // ===== Stage 3: Mascot Intervention =====
 
+function createMascotImage(src, side) {
+  const img = document.createElement("img");
+  img.src = src;
+  img.className = `ff-mascot-img ff-mascot-${side}`;
+  img.draggable = false;
+  Object.assign(img.style, {
+    position: "absolute",
+    bottom: "30px",
+    [side === "devil" ? "left" : "right"]: "40px",
+    width: "140px",
+    height: "140px",
+    objectFit: "contain",
+    animation: "ffMascotEnter 0.6s cubic-bezier(0.22, 1, 0.36, 1) forwards",
+    transition: "transform 0.35s ease, filter 0.35s ease",
+    zIndex: "2",
+    userSelect: "none",
+    pointerEvents: "none",
+  });
+  return img;
+}
+
 function showMascotOverlay() {
   distractionStage = 3;
 
   const overlay = createOverlay(0.75);
+  // Remove flex centering — mascots are absolutely positioned
+  overlay.style.display = "block";
 
-  const card = document.createElement("div");
-  Object.assign(card.style, {
-    background: FF_BG,
-    padding: "32px 28px 28px",
-    borderRadius: "20px",
-    textAlign: "center",
-    boxShadow: "0 24px 80px rgba(0, 0, 0, 0.35)",
-    maxWidth: "440px",
-    width: "92%",
-    animation: "ffScaleIn 0.4s ease",
-    fontFamily: FF_FONT,
-  });
+  // Devil mascot — bottom left
+  const devilImg = createMascotImage(DEVIL_IMG_URL, "devil");
+  overlay.appendChild(devilImg);
 
-  // Mascot header row
-  const mascotRow = document.createElement("div");
-  Object.assign(mascotRow.style, {
-    display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    gap: "24px",
-    marginBottom: "20px",
-  });
+  // Angel mascot — bottom right
+  const angelImg = createMascotImage(ANGEL_IMG_URL, "angel");
+  overlay.appendChild(angelImg);
 
-  // Devil mascot
-  const devil = document.createElement("div");
-  Object.assign(devil.style, { fontSize: "48px", lineHeight: "1" });
-  devil.innerHTML = "&#128520;"; // 😈
-
-  // VS divider
-  const vs = document.createElement("div");
-  Object.assign(vs.style, {
-    fontSize: "12px",
-    fontWeight: "700",
-    color: FF_TEXT_MUTED,
-    textTransform: "uppercase",
-    letterSpacing: "2px",
-  });
-  vs.textContent = "vs";
-
-  // Angel mascot
-  const angel = document.createElement("div");
-  Object.assign(angel.style, { fontSize: "48px", lineHeight: "1" });
-  angel.innerHTML = "&#128519;"; // 😇
-
-  mascotRow.appendChild(devil);
-  mascotRow.appendChild(vs);
-  mascotRow.appendChild(angel);
-  card.appendChild(mascotRow);
-
-  // Conversation area
-  const convoArea = document.createElement("div");
-  convoArea.id = "ff-convo-area";
-  Object.assign(convoArea.style, {
-    minHeight: "160px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "10px",
-    marginBottom: "20px",
-    padding: "0 4px",
-  });
-  card.appendChild(convoArea);
-
-  // Choice buttons (hidden initially)
-  const choiceRow = document.createElement("div");
-  choiceRow.id = "ff-choice-row";
-  Object.assign(choiceRow.style, {
-    display: "flex",
-    gap: "10px",
-    justifyContent: "center",
-    opacity: "0",
-    transition: "opacity 0.4s ease",
-    pointerEvents: "none",
-  });
-
-  // Devil button
-  const devilBtn = document.createElement("button");
-  Object.assign(devilBtn.style, {
-    flex: "1",
-    padding: "14px 16px",
-    fontSize: "14px",
-    fontWeight: "600",
-    fontFamily: FF_FONT,
-    background: "linear-gradient(135deg, #FF6B6B, #ee5a24)",
-    color: "white",
-    border: "none",
-    borderRadius: "12px",
-    cursor: "pointer",
-    transition: "all 0.25s ease",
-  });
-  devilBtn.innerHTML = "&#128520; Stay distracted";
-  devilBtn.onmouseover = () => {
-    devilBtn.style.transform = "translateY(-2px)";
-    devilBtn.style.boxShadow = "0 6px 20px rgba(238, 90, 36, 0.4)";
-  };
-  devilBtn.onmouseout = () => {
-    devilBtn.style.transform = "translateY(0)";
-    devilBtn.style.boxShadow = "none";
-  };
-  devilBtn.onclick = () => handleMascotChoice("devil");
-
-  // Angel button
-  const angelBtn = document.createElement("button");
-  Object.assign(angelBtn.style, {
-    flex: "1",
-    padding: "14px 16px",
-    fontSize: "14px",
-    fontWeight: "600",
-    fontFamily: FF_FONT,
-    background: `linear-gradient(135deg, ${FF_SUCCESS}, #2ecc71)`,
-    color: "white",
-    border: "none",
-    borderRadius: "12px",
-    cursor: "pointer",
-    transition: "all 0.25s ease",
-  });
-  angelBtn.innerHTML = "&#128519; Get back to work";
-  angelBtn.onmouseover = () => {
-    angelBtn.style.transform = "translateY(-2px)";
-    angelBtn.style.boxShadow = "0 6px 20px rgba(46, 204, 113, 0.4)";
-  };
-  angelBtn.onmouseout = () => {
-    angelBtn.style.transform = "translateY(0)";
-    angelBtn.style.boxShadow = "none";
-  };
-  angelBtn.onclick = () => handleMascotChoice("angel");
-
-  choiceRow.appendChild(devilBtn);
-  choiceRow.appendChild(angelBtn);
-  card.appendChild(choiceRow);
-
-  overlay.appendChild(card);
   document.documentElement.appendChild(overlay);
 
-  // Start conversation animation
-  animateConversation(convoArea, choiceRow);
+  // Wait for entrance animation to finish, then start conversation
+  setTimeout(() => {
+    animateConversation(overlay, devilImg, angelImg);
+  }, 700);
 }
 
 // ===== Mascot Conversation Animation =====
 
+function createBubbleTailSVG(isDevil) {
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "10");
+  svg.setAttribute("viewBox", "0 0 20 10");
+  Object.assign(svg.style, {
+    position: "absolute",
+    bottom: "-9px",
+    [isDevil ? "left" : "right"]: "20px",
+    display: "block",
+  });
+
+  const polygon = document.createElementNS(svgNS, "polygon");
+  polygon.setAttribute("points", isDevil ? "0,0 20,0 4,10" : "0,0 20,0 16,10");
+  polygon.setAttribute("fill", isDevil ? "#FFF0F0" : "#EEFBF1");
+  svg.appendChild(polygon);
+
+  return svg;
+}
+
 function createBubble(speaker, text) {
-  // speaker: "devil" or "angel"
   const isDevil = speaker === "devil";
 
-  const row = document.createElement("div");
-  Object.assign(row.style, {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: "8px",
-    justifyContent: isDevil ? "flex-start" : "flex-end",
-    animation: "ffBubbleIn 0.35s ease",
+  const wrapper = document.createElement("div");
+  wrapper.className = `ff-speech-bubble ff-bubble-${speaker}`;
+  Object.assign(wrapper.style, {
+    position: "absolute",
+    bottom: "185px",
+    [isDevil ? "left" : "right"]: "40px",
+    maxWidth: "280px",
+    zIndex: "3",
+    animation: "ffBubbleIn 0.35s ease forwards",
+    opacity: "0",
+    fontFamily: FF_FONT,
   });
-
-  const emoji = document.createElement("span");
-  Object.assign(emoji.style, {
-    fontSize: "22px",
-    flexShrink: "0",
-    lineHeight: "1.4",
-  });
-  emoji.innerHTML = isDevil ? "&#128520;" : "&#128519;";
 
   const bubble = document.createElement("div");
   Object.assign(bubble.style, {
+    position: "relative",
     background: isDevil ? "#FFF0F0" : "#EEFBF1",
     color: FF_TEXT,
-    padding: "10px 14px",
-    borderRadius: isDevil ? "4px 14px 14px 14px" : "14px 4px 14px 14px",
+    padding: "12px 16px",
+    borderRadius: "14px",
     fontSize: "13px",
-    lineHeight: "1.45",
-    maxWidth: "260px",
+    lineHeight: "1.5",
     textAlign: "left",
+    boxShadow: "0 4px 16px rgba(0, 0, 0, 0.12)",
   });
   bubble.textContent = text;
 
-  if (isDevil) {
-    row.appendChild(emoji);
-    row.appendChild(bubble);
-  } else {
-    row.appendChild(bubble);
-    row.appendChild(emoji);
-  }
+  // SVG tail pointing down to mascot
+  bubble.appendChild(createBubbleTailSVG(isDevil));
 
-  return row;
+  wrapper.appendChild(bubble);
+  return wrapper;
 }
 
-function animateConversation(convoArea, choiceRow) {
+function animateConversation(overlay, devilMascot, angelMascot) {
   const topicDisplay = sessionTopic || "your studies";
 
   const script = [
@@ -706,27 +675,113 @@ function animateConversation(convoArea, choiceRow) {
     },
   ];
 
+  let currentBubble = null;
   let i = 0;
-  const interval = setInterval(() => {
+
+  function showNextMessage() {
+    // Remove previous bubble
+    if (currentBubble) {
+      currentBubble.remove();
+      currentBubble = null;
+    }
+
+    // Reset both mascots to resting position
+    devilMascot.style.transform = "translateY(0)";
+    angelMascot.style.transform = "translateY(0)";
+
     if (i >= script.length) {
-      clearInterval(interval);
-      // Show choice buttons after conversation ends
+      // Conversation finished — enable mascot choice
       setTimeout(() => {
-        choiceRow.style.opacity = "1";
-        choiceRow.style.pointerEvents = "auto";
-      }, 500);
+        enableMascotChoice(overlay, devilMascot, angelMascot);
+      }, 400);
       return;
     }
 
     const msg = script[i];
-    const bubble = createBubble(msg.speaker, msg.text);
-    convoArea.appendChild(bubble);
+    const isDevil = msg.speaker === "devil";
+    const activeMascot = isDevil ? devilMascot : angelMascot;
 
-    // Scroll conversation area to bottom
-    convoArea.scrollTop = convoArea.scrollHeight;
+    // Pop active mascot up
+    activeMascot.style.transform = "translateY(-25px)";
+
+    // Show speech bubble above mascot
+    currentBubble = createBubble(msg.speaker, msg.text);
+    overlay.appendChild(currentBubble);
 
     i++;
-  }, 2000);
+
+    // Schedule next message
+    setTimeout(showNextMessage, 1500);
+  }
+
+  showNextMessage();
+}
+
+// ===== Mascot Choice Mode =====
+
+function enableMascotChoice(overlay, devilMascot, angelMascot) {
+  // Show "choose your side" prompt
+  const prompt = document.createElement("div");
+  prompt.className = "ff-choice-prompt";
+  Object.assign(prompt.style, {
+    position: "absolute",
+    bottom: "185px",
+    left: "50%",
+    transform: "translateX(-50%)",
+    color: "#FFFFFF",
+    fontFamily: FF_FONT,
+    fontSize: "15px",
+    fontWeight: "600",
+    textAlign: "center",
+    letterSpacing: "0.5px",
+    textShadow: "0 2px 8px rgba(0, 0, 0, 0.5)",
+    animation: "ffChoicePromptFade 0.5s ease forwards",
+    zIndex: "3",
+    pointerEvents: "none",
+  });
+  prompt.textContent = "Choose your side";
+  overlay.appendChild(prompt);
+
+  // Enable both mascots as clickable
+  [devilMascot, angelMascot].forEach((mascot) => {
+    mascot.style.pointerEvents = "auto";
+    mascot.style.cursor = "pointer";
+    mascot.style.transform = "translateY(0)";
+  });
+
+  // Devil hover & click
+  devilMascot.onmouseenter = () => {
+    devilMascot.style.transform = "scale(1.08)";
+    devilMascot.style.filter =
+      "drop-shadow(0 0 18px rgba(238, 90, 36, 0.6))";
+    // Shrink angel slightly to emphasise contrast
+    angelMascot.style.transform = "scale(0.95)";
+    angelMascot.style.filter = "brightness(0.8)";
+  };
+  devilMascot.onmouseleave = () => {
+    devilMascot.style.transform = "scale(1)";
+    devilMascot.style.filter = "none";
+    angelMascot.style.transform = "scale(1)";
+    angelMascot.style.filter = "none";
+  };
+  devilMascot.onclick = () => handleMascotChoice("devil");
+
+  // Angel hover & click
+  angelMascot.onmouseenter = () => {
+    angelMascot.style.transform = "scale(1.08)";
+    angelMascot.style.filter =
+      "drop-shadow(0 0 18px rgba(46, 204, 113, 0.6))";
+    // Shrink devil slightly
+    devilMascot.style.transform = "scale(0.95)";
+    devilMascot.style.filter = "brightness(0.8)";
+  };
+  angelMascot.onmouseleave = () => {
+    angelMascot.style.transform = "scale(1)";
+    angelMascot.style.filter = "none";
+    devilMascot.style.transform = "scale(1)";
+    devilMascot.style.filter = "none";
+  };
+  angelMascot.onclick = () => handleMascotChoice("angel");
 }
 
 // ===== Mascot Choice Handlers =====

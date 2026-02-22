@@ -1,4 +1,5 @@
 import { initParsingCollector } from "./parsing/collector.js";
+import { parseGeneralPageContent } from "./parsing/text-parser.js";
 import gsap from "gsap";
 
 // ===== Focus Flow - Content Script =====
@@ -31,7 +32,8 @@ let isCurrentSiteAllowed = false;
 // Inactivity state
 let inactivityTimer = null;
 let lastActivity = Date.now();
-const ALLOWED_SITE_IDLE_LIMIT = 30000; // 30 seconds
+const ALLOWED_SITE_IDLE_LIMIT = 15000; // requested cadence: every 15 seconds when idle
+const OFFTOPIC_WARNING_DELAY_MS = 5000;
 let inactivityRemainingMs = ALLOWED_SITE_IDLE_LIMIT;
 
 // Distraction state
@@ -52,6 +54,17 @@ const DISTRACTION_LIMIT = 10; // 10 seconds per stage (for testing)
 let distractionRecorded = false;
 
 let pageIsVisible = document.visibilityState === "visible";
+let aiInterventionVisible = false;
+const offTopicFlow = {
+  active: false,
+  site: null,
+  phase: 0,
+  retryCount: 0,
+  warningTimer: null,
+  mascotTimer: null,
+  retryTimer: null,
+  pendingIntervention: null,
+};
 
 // ===== CSS Animation Injection =====
 
@@ -138,6 +151,7 @@ function injectAnimationStyles() {
 function removeOverlay() {
   const el = document.getElementById("ff-overlay");
   if (el) el.remove();
+  aiInterventionVisible = false;
 }
 
 function removeTimerNotification() {
@@ -169,11 +183,154 @@ function syncAllowedSiteState() {
 }
 
 function refreshInactivityDetection() {
+  if (isCurrentSiteAllowed) {
+    clearOffTopicFlow();
+  }
   if (!isSessionActive || !isCurrentSiteAllowed || distractionStage !== DISTRACTION_STAGE.NONE) {
     cleanupInactivityDetection();
     return;
   }
   initInactivityDetection();
+}
+
+function clearOffTopicFlow() {
+  offTopicFlow.active = false;
+  offTopicFlow.site = null;
+  offTopicFlow.phase = 0;
+  offTopicFlow.retryCount = 0;
+  offTopicFlow.pendingIntervention = null;
+  if (offTopicFlow.warningTimer) {
+    clearTimeout(offTopicFlow.warningTimer);
+    offTopicFlow.warningTimer = null;
+  }
+  if (offTopicFlow.mascotTimer) {
+    clearTimeout(offTopicFlow.mascotTimer);
+    offTopicFlow.mascotTimer = null;
+  }
+  if (offTopicFlow.retryTimer) {
+    clearTimeout(offTopicFlow.retryTimer);
+    offTopicFlow.retryTimer = null;
+  }
+}
+
+function scheduleOffTopicRetry() {
+  if (!offTopicFlow.active || offTopicFlow.retryCount >= 1) return;
+  offTopicFlow.retryCount += 1;
+  offTopicFlow.retryTimer = setTimeout(() => {
+    if (!offTopicFlow.active || aiInterventionVisible) return;
+    const event = buildAiEventSnapshot({
+      trigger_type: "offtopic_site_retry",
+      is_allowed: false,
+      site: offTopicFlow.site,
+    });
+    requestAiInterventionNow("offtopic_site", "mascot_chat", event);
+  }, 12000);
+}
+
+function requestAiInterventionNow(triggerType, preferredIntervention, event = {}) {
+  chrome.runtime.sendMessage({
+    action: "requestAiInterventionNow",
+    payload: {
+      triggerType,
+      preferredIntervention,
+      event,
+    },
+  });
+}
+
+function buildAiEventSnapshot(extra = {}) {
+  const parsed = parseGeneralPageContent();
+  return {
+    timestamp: Date.now(),
+    url: parsed.page.url,
+    domain: parsed.page.domain,
+    page_title: parsed.page.page_title,
+    is_allowed: isCurrentSiteAllowed,
+    inactivity_seconds: Math.floor((Date.now() - lastActivity) / 1000),
+    content: {
+      headings: parsed.content?.top_headings || [],
+      summary: parsed.content?.visible_text_summary || "",
+      word_count: parsed.content?.word_count || 0,
+    },
+    metadata: parsed.metadata || {},
+    ...extra,
+  };
+}
+
+function showOffTopicWarningOverlay(site) {
+  if (!offTopicFlow.active || !pageIsVisible) return;
+  const overlay = createOverlay(0.5);
+  const card = createCard("380px");
+  card.appendChild(createIcon("&#9888;", "#FFF4E8"));
+  card.appendChild(createHeading("Off-topic site detected"));
+  card.appendChild(
+    createParagraph(
+      `You opened ${site}. If this isn't needed for ${sessionTopic || "your study goal"}, switch back now.`
+    )
+  );
+
+  const btnRow = document.createElement("div");
+  Object.assign(btnRow.style, {
+    display: "flex",
+    gap: "8px",
+    justifyContent: "center",
+  });
+
+  const keepBtn = createButton("Keep Being Distracted", false);
+  keepBtn.onclick = () => {
+    overlay.remove();
+    offTopicFlow.phase = 2;
+    if (offTopicFlow.mascotTimer) clearTimeout(offTopicFlow.mascotTimer);
+    offTopicFlow.mascotTimer = setTimeout(() => {
+      if (!offTopicFlow.active || aiInterventionVisible) return;
+      const event = buildAiEventSnapshot({
+        trigger_type: "offtopic_site",
+        is_allowed: false,
+        site,
+        warning_shown: true,
+        user_choice: "keep_distracted",
+      });
+      requestAiInterventionNow("offtopic_site", "mascot_chat", event);
+      scheduleOffTopicRetry();
+      if (offTopicFlow.pendingIntervention) {
+        showAiMascotConversation(offTopicFlow.pendingIntervention);
+        offTopicFlow.pendingIntervention = null;
+      }
+    }, 5000);
+  };
+
+  const backBtn = createButton("Go Back to Study");
+  backBtn.onclick = () => {
+    clearOffTopicFlow();
+    overlay.remove();
+    chrome.runtime.sendMessage({ action: "closeTab" });
+  };
+
+  btnRow.appendChild(keepBtn);
+  btnRow.appendChild(backBtn);
+  card.appendChild(btnRow);
+  overlay.appendChild(card);
+  document.documentElement.appendChild(overlay);
+}
+
+function startOffTopicFlow(site) {
+  if (!isSessionActive || isCurrentSiteAllowed) return;
+  if (offTopicFlow.active && offTopicFlow.site === site) return;
+
+  clearOffTopicFlow();
+  offTopicFlow.active = true;
+  offTopicFlow.site = site;
+  offTopicFlow.phase = 1;
+
+  cleanupDistraction();
+  cleanupInactivityDetection(false);
+
+  offTopicFlow.warningTimer = setTimeout(() => {
+    if (!offTopicFlow.active || offTopicFlow.site !== site) return;
+    showOffTopicWarningOverlay(site);
+  }, OFFTOPIC_WARNING_DELAY_MS);
+
+  offTopicFlow.mascotTimer = null;
 }
 
 // ===== Utility: Create base overlay =====
@@ -299,6 +456,326 @@ function createButton(text, isPrimary = true) {
   return btn;
 }
 
+function sendInterventionTelemetry(type, meta = {}) {
+  chrome.runtime.sendMessage({
+    action: "parseBatch",
+    payload: {
+      type: "ai_intervention_event",
+      event_type: type,
+      topic: sessionTopic || "",
+      page_url: window.location.href,
+      page_title: document.title,
+      timestamp: Date.now(),
+      ...meta,
+    },
+  });
+}
+
+function showAiFlashcard(intervention) {
+  if (aiInterventionVisible) return;
+  aiInterventionVisible = true;
+  removeTimerNotification();
+
+  const flashcard = intervention.flashcard || {};
+  const options = Array.isArray(flashcard.options) ? flashcard.options : [];
+
+  const overlay = createOverlay(0.62);
+  const card = createCard("480px");
+
+  card.appendChild(createIcon("&#129504;", "#FFF0EB"));
+  card.appendChild(createHeading("Quick Focus Flashcard"));
+  card.appendChild(
+    createParagraph("Answer this quickly to lock back into your study flow.")
+  );
+
+  const question = document.createElement("p");
+  Object.assign(question.style, {
+    fontSize: "16px",
+    fontWeight: "600",
+    color: FF_TEXT,
+    margin: "0 0 16px 0",
+    lineHeight: "1.45",
+    textAlign: "center",
+  });
+  question.textContent = flashcard.question || "What is one key idea from this page related to your topic?";
+  card.appendChild(question);
+
+  const optionsWrap = document.createElement("div");
+  Object.assign(optionsWrap.style, {
+    display: "grid",
+    gap: "8px",
+    marginBottom: "12px",
+    justifyItems: "center",
+  });
+
+  let selected = "";
+  options.forEach((option) => {
+    const btn = createButton(option, false);
+    btn.style.textAlign = "center";
+    btn.style.width = "100%";
+    btn.style.maxWidth = "420px";
+    btn.onclick = () => {
+      selected = option;
+      optionsWrap.querySelectorAll("button").forEach((node) => {
+        node.style.borderColor = FF_BORDER;
+        node.style.color = FF_TEXT_LIGHT;
+        node.style.background = "transparent";
+      });
+
+      const correctAnswer = String(flashcard.answer || "").trim();
+      const isCorrect = String(option).trim() === correctAnswer;
+      if (isCorrect) {
+        btn.style.borderColor = FF_SUCCESS;
+        btn.style.color = FF_TEXT;
+        btn.style.background = "rgba(107, 207, 127, 0.12)";
+      } else {
+        btn.style.borderColor = "#FF6B6B";
+        btn.style.color = FF_TEXT;
+        btn.style.background = "rgba(255, 107, 107, 0.1)";
+        const allButtons = Array.from(optionsWrap.querySelectorAll("button"));
+        const correctBtn = allButtons.find((node) => node.textContent?.trim() === correctAnswer);
+        if (correctBtn) {
+          correctBtn.style.borderColor = FF_SUCCESS;
+          correctBtn.style.color = FF_TEXT;
+          correctBtn.style.background = "rgba(107, 207, 127, 0.12)";
+        }
+      }
+    };
+    optionsWrap.appendChild(btn);
+  });
+  card.appendChild(optionsWrap);
+
+  const hint = document.createElement("p");
+  Object.assign(hint.style, {
+    fontSize: "12px",
+    color: FF_TEXT_MUTED,
+    margin: "0 0 12px 0",
+    textAlign: "center",
+  });
+  hint.textContent = flashcard.hint || "Hint: Look at the top headings and main summary.";
+  card.appendChild(hint);
+
+  const answer = document.createElement("p");
+  Object.assign(answer.style, {
+    fontSize: "12px",
+    color: FF_TEXT_LIGHT,
+    margin: "0 0 14px 0",
+    textAlign: "center",
+    display: "none",
+  });
+  answer.textContent = `Expected answer: ${flashcard.answer || "A concise concept-level answer is acceptable."}`;
+  card.appendChild(answer);
+
+  const explanation = document.createElement("p");
+  Object.assign(explanation.style, {
+    fontSize: "12px",
+    color: FF_TEXT_LIGHT,
+    margin: "0 0 14px 0",
+    textAlign: "center",
+    display: "none",
+    lineHeight: "1.5",
+  });
+  explanation.textContent = `Explanation: ${flashcard.explanation || "The correct option best matches the topic and page context."}`;
+  card.appendChild(explanation);
+
+  const row = document.createElement("div");
+  Object.assign(row.style, {
+    display: "flex",
+    justifyContent: "center",
+    gap: "8px",
+  });
+
+  const revealBtn = createButton("Reveal Answer", false);
+  revealBtn.onclick = () => {
+    answer.style.display = "block";
+    explanation.style.display = "block";
+    sendInterventionTelemetry("flashcard_reveal", {
+      selected_option: selected || null,
+    });
+  };
+
+  const continueBtn = createButton("Continue Studying");
+  continueBtn.onclick = () => {
+    sendInterventionTelemetry("flashcard_continue", {
+      selected_option: selected || null,
+      answered: Boolean(selected),
+    });
+    overlay.remove();
+    aiInterventionVisible = false;
+  };
+
+  row.appendChild(revealBtn);
+  row.appendChild(continueBtn);
+  card.appendChild(row);
+
+  overlay.appendChild(card);
+  document.documentElement.appendChild(overlay);
+
+  sendInterventionTelemetry("flashcard_shown", {
+    reason_codes: intervention.reason_codes || [],
+    confidence: intervention.confidence || null,
+  });
+}
+
+function normalizeMascotTurns(script, topic) {
+  const cleaned = Array.isArray(script)
+    ? script
+        .filter((x) => x && typeof x.text === "string" && x.text.trim())
+        .map((x) => ({ speaker: x.speaker === "angel" ? "angel" : "devil", text: x.text.trim() }))
+    : [];
+
+  if (cleaned.length < 4) return [];
+
+  const targetOrder = ["devil", "angel", "devil", "angel"];
+  const out = [];
+  const pool = [...cleaned];
+  for (const speaker of targetOrder) {
+    const idx = pool.findIndex((x) => x.speaker === speaker);
+    if (idx >= 0) {
+      out.push(pool[idx]);
+      pool.splice(idx, 1);
+    } else {
+      return [];
+    }
+  }
+  return out;
+}
+
+function showAiUnavailableNotice(kind) {
+  const overlay = createOverlay(0.55);
+  const card = createCard("420px");
+  card.appendChild(createIcon("&#9888;", "#FFF4E8"));
+  card.appendChild(createHeading("AI response unavailable"));
+  card.appendChild(
+    createParagraph(
+      kind === "flashcard"
+        ? "Could not generate a personalized flashcard right now. Please wait a few seconds and continue."
+        : "Could not generate a personalized mascot conversation right now. Please wait a few seconds and continue."
+    )
+  );
+  const btn = createButton("Continue Studying");
+  btn.onclick = () => {
+    overlay.remove();
+    aiInterventionVisible = false;
+  };
+  card.appendChild(btn);
+  overlay.appendChild(card);
+  document.documentElement.appendChild(overlay);
+}
+
+function showAiMascotConversation(intervention) {
+  if (aiInterventionVisible) return;
+  aiInterventionVisible = true;
+  removeTimerNotification();
+  distractionStage = DISTRACTION_STAGE.MASCOT;
+  if (offTopicFlow.site) {
+    currentDistractedSite = offTopicFlow.site;
+  }
+
+  const script = Array.isArray(intervention.mascot_script) ? intervention.mascot_script : [];
+  const turns = normalizeMascotTurns(script, sessionTopic);
+  if (!turns.length) {
+    showAiUnavailableNotice("mascot");
+    return;
+  }
+
+  const overlay = createOverlay(0.75);
+  overlay.style.display = "block";
+
+  const devilImg = createMascotImage(DEVIL_IMG_URL, "devil");
+  const angelImg = createMascotImage(ANGEL_IMG_URL, "angel");
+  overlay.appendChild(devilImg);
+  overlay.appendChild(angelImg);
+  document.documentElement.appendChild(overlay);
+
+  gsap.to(devilImg, { y: 0, opacity: 1, duration: 0.7, ease: "back.out(1.4)" });
+  gsap.to(angelImg, { y: 0, opacity: 1, duration: 0.7, ease: "back.out(1.4)", delay: 0.1 });
+
+  let idx = 0;
+  let activeBubble = null;
+
+  function step() {
+    if (activeBubble) {
+      gsap.to(activeBubble, {
+        opacity: 0,
+        duration: 0.2,
+        onComplete: () => activeBubble.remove(),
+      });
+      activeBubble = null;
+    }
+
+    if (idx >= turns.length) {
+      setTimeout(() => {
+        enableMascotChoice(overlay, devilImg, angelImg);
+      }, 900);
+      return;
+    }
+
+    const turn = turns[idx];
+    activeBubble = createBubble(turn.speaker, turn.text);
+    overlay.appendChild(activeBubble);
+    gsap.fromTo(
+      activeBubble,
+      { opacity: 0, scale: 0.82, y: 24 },
+      { opacity: 1, scale: 1, y: 0, duration: 0.45, ease: "back.out(1.7)" }
+    );
+    idx += 1;
+    setTimeout(() => {
+      if (activeBubble) {
+        gsap.to(activeBubble, { opacity: 0, duration: 0.2, onComplete: () => activeBubble?.remove() });
+        activeBubble = null;
+      }
+      setTimeout(step, 1000);
+    }, 3000);
+  }
+
+  setTimeout(step, 500);
+
+  sendInterventionTelemetry("mascot_shown", {
+    reason_codes: intervention.reason_codes || [],
+    confidence: intervention.confidence || null,
+  });
+}
+
+function handleAiIntervention(intervention) {
+  if (!intervention || !isSessionActive) return;
+  if (distractionStage !== DISTRACTION_STAGE.NONE) return;
+
+  if (intervention.generation_failed) {
+    showAiUnavailableNotice(intervention.requestedIntervention === "flashcard" ? "flashcard" : "mascot");
+    return;
+  }
+
+  const triggerType = intervention.triggerType;
+  const preferred = intervention.requestedIntervention;
+
+  if (triggerType === "offtopic_site" || preferred === "mascot_chat") {
+    if (offTopicFlow.active && offTopicFlow.phase < 2) {
+      offTopicFlow.pendingIntervention = intervention;
+      return;
+    }
+    clearOffTopicFlow();
+    showAiMascotConversation(intervention);
+    return;
+  }
+
+  const isIdleFlashcardTrigger =
+    triggerType === "idle_allowed_site" || triggerType === "idle_allowed_site_retry";
+
+  if (isIdleFlashcardTrigger && intervention.intervention === "flashcard") {
+    if (!intervention.flashcard || !intervention.flashcard.question) {
+      showAiUnavailableNotice("flashcard");
+      return;
+    }
+    showAiFlashcard(intervention);
+    return;
+  }
+
+  if (intervention.intervention === "mascot_chat") {
+    showAiMascotConversation(intervention);
+  }
+}
+
 // ===== Distraction Stats Helpers =====
 
 // Records the start of a distraction event in session storage
@@ -372,6 +849,7 @@ chrome.storage.onChanged.addListener((changes) => {
       sessionTopic = "";
       currentAllowedSites = [];
       isCurrentSiteAllowed = false;
+      clearOffTopicFlow();
       cleanupInactivityDetection();
       cleanupDistraction();
     }
@@ -440,27 +918,18 @@ function showInactivityOverlay() {
   if (!pageIsVisible) return;
   if (!isCurrentSiteAllowed) return;
   if (distractionStage !== DISTRACTION_STAGE.NONE) return;
-  if (document.getElementById("ff-overlay")) return;
+  if (aiInterventionVisible) return;
 
-  const overlay = createOverlay();
-  const card = createCard("360px");
+  const event = buildAiEventSnapshot({
+    trigger_type: "idle_allowed_site",
+    inactivity_seconds: Math.floor((Date.now() - lastActivity) / 1000),
+  });
+  requestAiInterventionNow("idle_allowed_site", "flashcard", event);
 
-  card.appendChild(createIcon("&#9200;", "#FFF0EB"));
-  card.appendChild(createHeading("Still there?"));
-  card.appendChild(createParagraph("It looks like you've been inactive. Are you still focused?"));
-
-  const btn = createButton("Yes, I'm here");
-  btn.onclick = () => {
-    overlay.remove();
-    lastActivity = Date.now();
-    inactivityRemainingMs = ALLOWED_SITE_IDLE_LIMIT;
-    if (inactivityTimer) clearTimeout(inactivityTimer);
-    inactivityTimer = setTimeout(showInactivityOverlay, inactivityRemainingMs);
-  };
-  card.appendChild(btn);
-
-  overlay.appendChild(card);
-  document.documentElement.appendChild(overlay);
+  lastActivity = Date.now();
+  inactivityRemainingMs = ALLOWED_SITE_IDLE_LIMIT;
+  if (inactivityTimer) clearTimeout(inactivityTimer);
+  inactivityTimer = setTimeout(showInactivityOverlay, inactivityRemainingMs);
 }
 
 // ================================================================
@@ -1360,6 +1829,7 @@ function enableMascotChoice(overlay, devilMascot, angelMascot) {
 function handleMascotChoice(choice) {
   // Record the user's choice and distraction duration
   recordDistractionEnd(choice);
+  clearOffTopicFlow();
 
   if (choice === "angel") {
     // Close the current tab
@@ -1442,8 +1912,13 @@ function showShameScreen() {
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.action === "block") {
-    // Background says this site is not allowed → start distraction timer
-    startDistraction(msg.site);
+    // AI-first off-topic flow with grace + warning
+    startOffTopicFlow(msg.site);
+    return;
+  }
+
+  if (msg.action === "aiIntervention" && msg.payload) {
+    handleAiIntervention(msg.payload);
   }
 });
 

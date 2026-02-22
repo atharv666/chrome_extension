@@ -7,8 +7,14 @@ const PARSE_FLUSH_ALARM_NAME = "focusflow-parse-flush";
 
 const PARSE_API_ENDPOINT_KEY = "parseApiEndpoint";
 const DEFAULT_PARSE_API_ENDPOINT = "http://localhost:3000/api/parse";
+const AI_API_ENDPOINT_KEY = "aiApiEndpoint";
+const DEFAULT_AI_API_ENDPOINT = "http://localhost:3000/api/ai/analyze";
 const parseBatchQueue = [];
 let isFlushingParseQueue = false;
+const aiInterventionState = {
+  lastAt: 0,
+  cooldownMs: 15000,
+};
 
 const tabTracking = {
   activeTabId: null,
@@ -128,6 +134,11 @@ async function getParseEndpoint() {
   return res[PARSE_API_ENDPOINT_KEY] || DEFAULT_PARSE_API_ENDPOINT;
 }
 
+async function getAiEndpoint() {
+  const res = await chrome.storage.local.get([AI_API_ENDPOINT_KEY]);
+  return res[AI_API_ENDPOINT_KEY] || DEFAULT_AI_API_ENDPOINT;
+}
+
 async function postParsedData(payload) {
   const endpoint = await getParseEndpoint();
 
@@ -140,6 +151,105 @@ async function postParsedData(payload) {
   } catch (error) {
     console.warn("Focus Flow: parse post failed", error);
   }
+}
+
+async function requestAiDecision(payload) {
+  const endpoint = await getAiEndpoint();
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data?.decision || null;
+  } catch (error) {
+    console.warn("Focus Flow: ai analyze failed", error);
+    return null;
+  }
+}
+
+function shouldTriggerIntervention(decision, payload = null) {
+  if (!decision || decision.intervention === "none") return false;
+
+  const triggerType = payload?.trigger_type || null;
+  if (triggerType === "idle_allowed_site" || triggerType === "idle_allowed_site_retry") {
+    aiInterventionState.lastAt = Date.now();
+    return true;
+  }
+
+  const now = Date.now();
+  if (now - aiInterventionState.lastAt < aiInterventionState.cooldownMs) {
+    return false;
+  }
+  aiInterventionState.cooldownMs = Math.max(
+    10000,
+    Math.min(30000, Number(decision.cooldown_seconds || 90) * 1000)
+  );
+  aiInterventionState.lastAt = now;
+  return true;
+}
+
+async function dispatchAiIntervention(decision, payload, targetTabId = null) {
+  if (!shouldTriggerIntervention(decision, payload)) return;
+
+  const tabId = targetTabId || tabTracking.activeTabId;
+  if (!tabId) return;
+
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      action: "aiIntervention",
+      payload: {
+        ...decision,
+        sessionTopic: payload.study_topic || "",
+        triggerType: payload.trigger_type || null,
+        requestedIntervention: payload.requested_intervention || null,
+      },
+    });
+  } catch {
+    // ignore send failures for tabs without ready content scripts
+  }
+}
+
+async function requestImmediateAiIntervention(triggerPayload, sender) {
+  checkpointActiveTabDuration();
+  const { session } = await chrome.storage.local.get(["session"]);
+  if (!session || !session.active) return;
+
+  const tabId = sender?.tab?.id;
+  if (tabId && sender.tab?.url) {
+    setTabMeta(tabId, sender.tab.url, sender.tab.title || "");
+  }
+
+  const payload = {
+    type: "immediate",
+    trigger_type: triggerPayload.triggerType || "manual",
+    requested_intervention: triggerPayload.preferredIntervention || "none",
+    timestamp: Date.now(),
+    study_topic: session.topic || "",
+    session_duration: session.startTime
+      ? Math.floor((Date.now() - session.startTime) / 1000)
+      : 0,
+    tab_switches: tabTracking.tabSwitchCount,
+    active_tab_id: tabTracking.activeTabId,
+    active_tab_time_seconds: tabTracking.activeTabId
+      ? Math.floor((tabTracking.perTabMs[tabTracking.activeTabId] || 0) / 1000)
+      : 0,
+    open_tabs: buildOpenTabsSnapshot(),
+    events: [
+      {
+        ...(triggerPayload.event || {}),
+        tab_id: tabId || null,
+      },
+    ],
+  };
+
+  await postParsedData(payload);
+  const decision = await requestAiDecision(payload);
+  await dispatchAiIntervention(decision, payload, tabId || null);
 }
 
 async function flushParseQueue() {
@@ -181,6 +291,8 @@ async function flushParseQueue() {
     };
 
     await postParsedData(payload);
+    const decision = await requestAiDecision(payload);
+    await dispatchAiIntervention(decision, payload);
   } finally {
     isFlushingParseQueue = false;
   }
@@ -370,6 +482,11 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
     return;
   }
 
+  if (msg.action === "requestAiInterventionNow" && msg.payload) {
+    requestImmediateAiIntervention(msg.payload, sender);
+    return;
+  }
+
   if (msg.action === "parseBatch" && msg.payload) {
     queueParsePayload(msg.payload, sender);
     return;
@@ -377,6 +494,11 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 
   if (msg.action === "setParseEndpoint" && typeof msg.endpoint === "string") {
     chrome.storage.local.set({ [PARSE_API_ENDPOINT_KEY]: msg.endpoint.trim() });
+    return;
+  }
+
+  if (msg.action === "setAiEndpoint" && typeof msg.endpoint === "string") {
+    chrome.storage.local.set({ [AI_API_ENDPOINT_KEY]: msg.endpoint.trim() });
     return;
   }
 

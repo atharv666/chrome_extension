@@ -1,10 +1,26 @@
-// ===== Focus Flow - Dashboard =====
-// Full-page analytics dashboard with Chart.js visualizations
-
 import { Chart, registerables } from "chart.js";
+
 Chart.register(...registerables);
 
-// ===== Utilities =====
+const state = {
+  range: "7d",
+  dataSource: "live",
+  persona: "new",
+  liveSessions: [],
+  analyticsCache: new Map(),
+  searchQuery: "",
+};
+
+const chartRefs = {
+  weeklyTime: null,
+  weeklyScore: null,
+  periodCompare: null,
+  scoreDistribution: null,
+};
+
+function byId(id) {
+  return document.getElementById(id);
+}
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -24,9 +40,8 @@ function formatTime(ms) {
 
 function formatHours(ms) {
   const hours = ms / (1000 * 60 * 60);
-  if (hours >= 1) return hours.toFixed(1) + "h";
-  const minutes = ms / (1000 * 60);
-  return Math.round(minutes) + "m";
+  if (hours >= 1) return `${hours.toFixed(1)}h`;
+  return `${Math.round(ms / (1000 * 60))}m`;
 }
 
 function getDateKey(timestamp) {
@@ -34,23 +49,14 @@ function getDateKey(timestamp) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function getDayLabel(dateKey) {
-  const d = new Date(dateKey + "T12:00:00");
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-}
-
 function getShortDayLabel(dateKey) {
-  const d = new Date(dateKey + "T12:00:00");
+  const d = new Date(`${dateKey}T12:00:00`);
   return d.toLocaleDateString("en-US", { weekday: "short" });
 }
 
-function getTodayKey() {
-  return getDateKey(Date.now());
-}
-
-function getLast7DaysKeys() {
+function getLastNDaysKeys(days) {
   const keys = [];
-  for (let i = 6; i >= 0; i--) {
+  for (let i = days - 1; i >= 0; i -= 1) {
     const d = new Date();
     d.setDate(d.getDate() - i);
     keys.push(getDateKey(d.getTime()));
@@ -58,127 +64,187 @@ function getLast7DaysKeys() {
   return keys;
 }
 
-// ===== Analytics Engine =====
-
-function computeAnalytics(sessions) {
-  const today = getTodayKey();
-  const last7 = getLast7DaysKeys();
-
-  // Group sessions by date
-  const byDate = {};
-  for (const s of sessions) {
+function countActiveDaysInWindow(sessions, days) {
+  const allowedKeys = new Set(getLastNDaysKeys(days));
+  const activeKeys = new Set();
+  sessions.forEach((s) => {
     const key = getDateKey(s.startTime || s.endTime || Date.now());
-    if (!byDate[key]) byDate[key] = [];
-    byDate[key].push(s);
+    if (allowedKeys.has(key)) activeKeys.add(key);
+  });
+  return Math.min(activeKeys.size, days);
+}
+
+function startOfDay(ts) {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function endOfDay(ts) {
+  const d = new Date(ts);
+  d.setHours(23, 59, 59, 999);
+  return d.getTime();
+}
+
+function formatRangeLabel(startTs, endTs) {
+  const start = new Date(startTs);
+  const end = new Date(endTs);
+  const startMonth = start.toLocaleDateString("en-US", { month: "short" });
+  const endMonth = end.toLocaleDateString("en-US", { month: "short" });
+  if (startMonth === endMonth) return `${startMonth} ${start.getDate()}-${end.getDate()}`;
+  return `${startMonth} ${start.getDate()}-${endMonth} ${end.getDate()}`;
+}
+
+function buildTimelineSeries(sessions, range) {
+  const now = Date.now();
+  const getSessionTs = (s) => s.startTime || s.endTime || 0;
+
+  if (range === "7d") {
+    const dayKeys = getLastNDaysKeys(7);
+    const byDate = {};
+    sessions.forEach((s) => {
+      const key = getDateKey(getSessionTs(s) || now);
+      if (!byDate[key]) byDate[key] = [];
+      byDate[key].push(s);
+    });
+    return {
+      labels: dayKeys.map((k) => getShortDayLabel(k)),
+      time: dayKeys.map((key) => sumDuration(byDate[key] || [])),
+      score: dayKeys.map((key) => avgScore(byDate[key] || [])),
+      timeSubtitle: "Hours per day, last 7 days",
+      scoreSubtitle: "Average score per day, last 7 days",
+    };
   }
 
-  // Today's stats
-  const todaySessions = byDate[today] || [];
-  const todayFocusTime = todaySessions.reduce((sum, s) => sum + (s.duration || 0), 0);
-  const todayCount = todaySessions.length;
-  const todayAvgScore = todayCount > 0
-    ? Math.round(todaySessions.reduce((sum, s) => sum + (s.focusScore || 0), 0) / todayCount)
-    : null;
-  const todayDistractions = todaySessions.reduce((sum, s) => sum + (s.distractions || 0), 0);
-
-  // Weekly data
-  const weeklyTime = last7.map((key) => {
-    const daySessions = byDate[key] || [];
-    return daySessions.reduce((sum, s) => sum + (s.duration || 0), 0);
-  });
-  const weeklyScore = last7.map((key) => {
-    const daySessions = byDate[key] || [];
-    if (daySessions.length === 0) return null;
-    return Math.round(daySessions.reduce((sum, s) => sum + (s.focusScore || 0), 0) / daySessions.length);
-  });
-  const weeklyLabels = last7.map(getShortDayLabel);
-
-  // All-time stats
-  const totalFocusTime = sessions.reduce((sum, s) => sum + (s.duration || 0), 0);
-  const totalSessions = sessions.length;
-  const avgScore = totalSessions > 0
-    ? Math.round(sessions.reduce((sum, s) => sum + (s.focusScore || 0), 0) / totalSessions)
-    : null;
-
-  // Streak calculation
-  const { currentStreak, longestStreak } = computeStreaks(sessions);
-
-  // Top distracting sites (aggregate from all sessions)
-  const siteCounts = {};
-  for (const s of sessions) {
-    const sites = s.distractingSites || {};
-    for (const [domain, count] of Object.entries(sites)) {
-      siteCounts[domain] = (siteCounts[domain] || 0) + count;
+  if (range === "30d") {
+    const windowStart = startOfDay(now - 29 * 24 * 60 * 60 * 1000);
+    const buckets = [];
+    for (let i = 0; i < 5; i += 1) {
+      const start = windowStart + i * 7 * 24 * 60 * 60 * 1000;
+      const end = Math.min(start + 7 * 24 * 60 * 60 * 1000 - 1, endOfDay(now));
+      buckets.push({ start, end });
     }
-  }
-  const topSites = Object.entries(siteCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
 
-  // Angel vs Devil choices (aggregate)
-  let totalAngel = 0;
-  let totalDevil = 0;
-  for (const s of sessions) {
-    const c = s.choices || {};
-    totalAngel += c.angel || 0;
-    totalDevil += c.devil || 0;
+    const labels = [];
+    const time = [];
+    const score = [];
+    buckets.forEach((bucket) => {
+      const inBucket = sessions.filter((s) => {
+        const ts = getSessionTs(s);
+        return ts >= bucket.start && ts <= bucket.end;
+      });
+      labels.push(formatRangeLabel(bucket.start, bucket.end));
+      time.push(sumDuration(inBucket));
+      score.push(avgScore(inBucket));
+    });
+
+    return {
+      labels,
+      time,
+      score,
+      timeSubtitle: "Hours per week, last 30 days",
+      scoreSubtitle: "Average score per week, last 30 days",
+    };
   }
 
-  // Study insights
-  const insights = computeInsights(sessions);
+  const maxTs = sessions.length ? Math.max(...sessions.map((s) => getSessionTs(s))) : now;
+  const minTs = sessions.length ? Math.min(...sessions.map((s) => getSessionTs(s))) : now;
+  const startMonth = new Date(minTs);
+  startMonth.setDate(1);
+  startMonth.setHours(0, 0, 0, 0);
+  const endMonth = new Date(maxTs);
+  endMonth.setDate(1);
+  endMonth.setHours(0, 0, 0, 0);
+
+  const monthBuckets = [];
+  const cursor = new Date(startMonth);
+  while (cursor <= endMonth) {
+    const start = cursor.getTime();
+    const next = new Date(cursor);
+    next.setMonth(next.getMonth() + 1);
+    const end = next.getTime() - 1;
+    monthBuckets.push({ start, end, label: cursor.toLocaleDateString("en-US", { month: "short", year: "numeric" }) });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  const labels = [];
+  const time = [];
+  const score = [];
+  monthBuckets.forEach((bucket) => {
+    const inBucket = sessions.filter((s) => {
+      const ts = getSessionTs(s);
+      return ts >= bucket.start && ts <= bucket.end;
+    });
+    labels.push(bucket.label);
+    time.push(sumDuration(inBucket));
+    score.push(avgScore(inBucket));
+  });
 
   return {
-    today: { focusTime: todayFocusTime, sessions: todayCount, avgScore: todayAvgScore, distractions: todayDistractions },
-    weekly: { labels: weeklyLabels, time: weeklyTime, score: weeklyScore },
-    allTime: { focusTime: totalFocusTime, sessions: totalSessions, avgScore, longestStreak },
-    currentStreak,
-    topSites,
-    choices: { angel: totalAngel, devil: totalDevil },
-    insights,
-    byDate,
+    labels,
+    time,
+    score,
+    timeSubtitle: "Hours per month, full history",
+    scoreSubtitle: "Average score per month",
   };
 }
 
+function rangeDays(range) {
+  if (range === "7d") return 7;
+  if (range === "30d") return 30;
+  return null;
+}
+
+function getRangeWindows(range) {
+  const days = rangeDays(range);
+  if (!days) return null;
+  const now = Date.now();
+  const currentStart = now - days * 24 * 60 * 60 * 1000;
+  const previousStart = currentStart - days * 24 * 60 * 60 * 1000;
+  return { currentStart, previousStart, now, currentEnd: now };
+}
+
+function sumDuration(sessions) {
+  return sessions.reduce((sum, s) => sum + (s.duration || 0), 0);
+}
+
+function avgScore(sessions) {
+  if (!sessions.length) return null;
+  return Math.round(sessions.reduce((sum, s) => sum + (s.focusScore || 0), 0) / sessions.length);
+}
+
+function sumDistractions(sessions) {
+  return sessions.reduce((sum, s) => sum + (s.distractions || 0), 0);
+}
+
 function computeStreaks(sessions) {
-  if (sessions.length === 0) return { currentStreak: 0, longestStreak: 0 };
-
-  // Get unique date keys
-  const dateSet = new Set();
-  for (const s of sessions) {
-    dateSet.add(getDateKey(s.startTime || s.endTime || Date.now()));
-  }
+  if (!sessions.length) return { currentStreak: 0, longestStreak: 0 };
+  const dateSet = new Set(sessions.map((s) => getDateKey(s.startTime || s.endTime || Date.now())));
   const sortedDates = [...dateSet].sort();
-
-  // Compute longest streak
   let longest = 1;
   let current = 1;
-  for (let i = 1; i < sortedDates.length; i++) {
-    const prev = new Date(sortedDates[i - 1] + "T12:00:00");
-    const curr = new Date(sortedDates[i] + "T12:00:00");
+  for (let i = 1; i < sortedDates.length; i += 1) {
+    const prev = new Date(`${sortedDates[i - 1]}T12:00:00`);
+    const curr = new Date(`${sortedDates[i]}T12:00:00`);
     const diff = (curr - prev) / (1000 * 60 * 60 * 24);
     if (diff === 1) {
-      current++;
-      if (current > longest) longest = current;
+      current += 1;
+      longest = Math.max(longest, current);
     } else {
       current = 1;
     }
   }
 
-  // Compute current streak (counting back from today)
-  const todayKey = getTodayKey();
+  const today = new Date();
   let streak = 0;
-  let checkDate = new Date();
-  // If today has sessions, start from today; otherwise start from yesterday
-  if (!dateSet.has(todayKey)) {
-    checkDate.setDate(checkDate.getDate() - 1);
-    const yesterdayKey = getDateKey(checkDate.getTime());
-    if (!dateSet.has(yesterdayKey)) return { currentStreak: 0, longestStreak: longest };
-  }
-  while (true) {
-    const key = getDateKey(checkDate.getTime());
+  for (let i = 0; i < 365; i += 1) {
+    const d = new Date(today);
+    d.setDate(today.getDate() - i);
+    const key = getDateKey(d.getTime());
     if (dateSet.has(key)) {
-      streak++;
-      checkDate.setDate(checkDate.getDate() - 1);
+      streak += 1;
+    } else if (i === 0) {
+      continue;
     } else {
       break;
     }
@@ -192,100 +258,414 @@ function computeInsights(sessions) {
     bestTime: null,
     optimalLength: null,
     bestDay: null,
+    confidence: { bestTime: 0, optimalLength: 0, bestDay: 0 },
+    opportunity: "",
   };
 
-  if (sessions.length < 3) return insights;
-
-  // Best study time (hour of day)
-  const hourScores = {};
-  const hourCounts = {};
-  for (const s of sessions) {
-    if (!s.startTime) continue;
-    const hour = new Date(s.startTime).getHours();
-    hourScores[hour] = (hourScores[hour] || 0) + (s.focusScore || 0);
-    hourCounts[hour] = (hourCounts[hour] || 0) + 1;
+  if (!sessions.length) {
+    insights.opportunity = "Opportunity: Start 3 focused sessions to unlock personalized recommendations.";
+    return insights;
   }
+
+  const hourStats = {};
+  sessions.forEach((s) => {
+    if (!s.startTime) return;
+    const hour = new Date(s.startTime).getHours();
+    if (!hourStats[hour]) hourStats[hour] = { total: 0, count: 0 };
+    hourStats[hour].total += s.focusScore || 0;
+    hourStats[hour].count += 1;
+  });
+
   let bestHour = null;
-  let bestHourAvg = 0;
-  for (const [hour, total] of Object.entries(hourScores)) {
-    const avg = total / hourCounts[hour];
+  let bestHourAvg = -1;
+  Object.entries(hourStats).forEach(([hour, item]) => {
+    if (item.count < 2) return;
+    const avg = item.total / item.count;
     if (avg > bestHourAvg) {
       bestHourAvg = avg;
-      bestHour = parseInt(hour);
+      bestHour = Number(hour);
     }
-  }
+  });
+
   if (bestHour !== null) {
-    const h = bestHour;
-    const ampm = h >= 12 ? "PM" : "AM";
-    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
-    const nextH = (h + 2) % 24;
-    const nextAmpm = nextH >= 12 ? "PM" : "AM";
-    const nextH12 = nextH === 0 ? 12 : nextH > 12 ? nextH - 12 : nextH;
+    const next = (bestHour + 2) % 24;
+    const h12 = bestHour === 0 ? 12 : bestHour > 12 ? bestHour - 12 : bestHour;
+    const n12 = next === 0 ? 12 : next > 12 ? next - 12 : next;
     insights.bestTime = {
-      label: `${h12} ${ampm} - ${nextH12} ${nextAmpm}`,
+      label: `${h12}${bestHour >= 12 ? "PM" : "AM"} - ${n12}${next >= 12 ? "PM" : "AM"}`,
       score: Math.round(bestHourAvg),
+      recommendation: "Schedule your hardest task in this window.",
     };
+    insights.confidence.bestTime = hourStats[bestHour].count;
   }
 
-  // Optimal session length
-  const buckets = { "< 30m": [], "30-60m": [], "60-90m": [], "90m+": [] };
-  for (const s of sessions) {
-    const mins = (s.duration || 0) / (1000 * 60);
+  const buckets = {
+    "< 30m": [],
+    "30-60m": [],
+    "60-90m": [],
+    "90m+": [],
+  };
+  sessions.forEach((s) => {
+    const mins = (s.duration || 0) / 60000;
     if (mins < 30) buckets["< 30m"].push(s.focusScore || 0);
     else if (mins < 60) buckets["30-60m"].push(s.focusScore || 0);
     else if (mins < 90) buckets["60-90m"].push(s.focusScore || 0);
     else buckets["90m+"].push(s.focusScore || 0);
-  }
+  });
+
   let bestBucket = null;
-  let bestBucketAvg = 0;
-  for (const [label, scores] of Object.entries(buckets)) {
-    if (scores.length < 1) continue;
+  let bestBucketAvg = -1;
+  Object.entries(buckets).forEach(([label, scores]) => {
+    if (scores.length < 2) return;
     const avg = scores.reduce((a, b) => a + b, 0) / scores.length;
     if (avg > bestBucketAvg) {
       bestBucketAvg = avg;
       bestBucket = label;
     }
-  }
+  });
+
   if (bestBucket) {
-    insights.optimalLength = { label: bestBucket, score: Math.round(bestBucketAvg) };
+    insights.optimalLength = {
+      label: bestBucket,
+      score: Math.round(bestBucketAvg),
+      recommendation: "Use this duration as your default deep-work block.",
+    };
+    insights.confidence.optimalLength = buckets[bestBucket].length;
   }
 
-  // Best day of week
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const dayScores = {};
-  const dayCounts = {};
-  for (const s of sessions) {
-    if (!s.startTime) continue;
+  const dayStats = {};
+  sessions.forEach((s) => {
+    if (!s.startTime) return;
     const day = new Date(s.startTime).getDay();
-    dayScores[day] = (dayScores[day] || 0) + (s.focusScore || 0);
-    dayCounts[day] = (dayCounts[day] || 0) + 1;
-  }
-  let bestDayIdx = null;
-  let bestDayAvg = 0;
-  for (const [day, total] of Object.entries(dayScores)) {
-    const avg = total / dayCounts[day];
+    if (!dayStats[day]) dayStats[day] = { total: 0, count: 0 };
+    dayStats[day].total += s.focusScore || 0;
+    dayStats[day].count += 1;
+  });
+
+  let bestDay = null;
+  let bestDayAvg = -1;
+  Object.entries(dayStats).forEach(([day, item]) => {
+    if (item.count < 2) return;
+    const avg = item.total / item.count;
     if (avg > bestDayAvg) {
       bestDayAvg = avg;
-      bestDayIdx = parseInt(day);
+      bestDay = Number(day);
+    }
+  });
+
+  if (bestDay !== null) {
+    insights.bestDay = {
+      label: dayNames[bestDay],
+      score: Math.round(bestDayAvg),
+      recommendation: "Plan revision-heavy sessions on this day.",
+    };
+    insights.confidence.bestDay = dayStats[bestDay].count;
+  }
+
+  const recent = sessions.filter((s) => (s.startTime || 0) >= Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const lateSessions = recent.filter((s) => {
+    const h = new Date(s.startTime || 0).getHours();
+    return h >= 21 || h < 6;
+  });
+  if (lateSessions.length >= 2) {
+    const lateAvg = avgScore(lateSessions) || 0;
+    const allAvg = avgScore(recent) || 0;
+    if (lateAvg + 6 < allAvg) {
+      insights.opportunity = "Opportunity: Late-night sessions are underperforming; shift deep work earlier.";
     }
   }
-  if (bestDayIdx !== null) {
-    insights.bestDay = { label: dayNames[bestDayIdx], score: Math.round(bestDayAvg) };
+  if (!insights.opportunity) {
+    insights.opportunity = "Opportunity: Keep session timing consistent to improve focus stability.";
   }
 
   return insights;
 }
 
-// ===== Chart Rendering =====
+function computeAnalytics(allSessions, range) {
+  const sortedAll = [...allSessions].sort((a, b) => (a.startTime || 0) - (b.startTime || 0));
+  const windows = getRangeWindows(range);
+  const inRange = windows
+    ? sortedAll.filter((s) => (s.startTime || s.endTime || 0) >= windows.currentStart)
+    : sortedAll;
+  const previousRange = windows
+    ? sortedAll.filter((s) => {
+        const t = s.startTime || s.endTime || 0;
+        return t >= windows.previousStart && t < windows.currentStart;
+      })
+    : [];
+
+  const todayKey = getDateKey(Date.now());
+  const todaySessions = inRange.filter((s) => getDateKey(s.startTime || s.endTime || Date.now()) === todayKey);
+
+  const timeline = buildTimelineSeries(inRange, range);
+
+  const scoreDistribution = {
+    high: inRange.filter((s) => (s.focusScore || 0) >= 80).length,
+    medium: inRange.filter((s) => (s.focusScore || 0) >= 50 && (s.focusScore || 0) < 80).length,
+    low: inRange.filter((s) => (s.focusScore || 0) < 50).length,
+  };
+
+  const siteCounts = {};
+  inRange.forEach((s) => {
+    Object.entries(s.distractingSites || {}).forEach(([domain, count]) => {
+      siteCounts[domain] = (siteCounts[domain] || 0) + count;
+    });
+  });
+  const prevSiteCounts = {};
+  previousRange.forEach((s) => {
+    Object.entries(s.distractingSites || {}).forEach(([domain, count]) => {
+      prevSiteCounts[domain] = (prevSiteCounts[domain] || 0) + count;
+    });
+  });
+  const topSites = Object.entries(siteCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([domain, count]) => ({ domain, count, delta: count - (prevSiteCounts[domain] || 0) }));
+
+  let angel = 0;
+  let devil = 0;
+  inRange.forEach((s) => {
+    angel += s.choices?.angel || 0;
+    devil += s.choices?.devil || 0;
+  });
+  let prevAngel = 0;
+  let prevDevil = 0;
+  previousRange.forEach((s) => {
+    prevAngel += s.choices?.angel || 0;
+    prevDevil += s.choices?.devil || 0;
+  });
+
+  const activeDays14 = countActiveDaysInWindow(sortedAll, 14);
+
+  const bestSession = inRange.length
+    ? [...inRange].sort((a, b) => (b.focusScore || 0) - (a.focusScore || 0))[0]
+    : null;
+  const worstSession = inRange.length
+    ? [...inRange].sort((a, b) => {
+        const aPenalty = (a.focusScore || 0) - (a.distractions || 0) * 2;
+        const bPenalty = (b.focusScore || 0) - (b.distractions || 0) * 2;
+        return aPenalty - bPenalty;
+      })[0]
+    : null;
+
+  const insights = computeInsights(inRange);
+  const allStreaks = computeStreaks(sortedAll);
+
+  return {
+    sessionsFiltered: inRange,
+    today: {
+      focusTime: sumDuration(todaySessions),
+      sessions: todaySessions.length,
+      avgScore: avgScore(todaySessions),
+      distractions: sumDistractions(todaySessions),
+    },
+    period: {
+      focusTime: sumDuration(inRange),
+      sessions: inRange.length,
+      avgScore: avgScore(inRange),
+      distractions: sumDistractions(inRange),
+    },
+    previous: {
+      focusTime: sumDuration(previousRange),
+      sessions: previousRange.length,
+      avgScore: avgScore(previousRange),
+      distractions: sumDistractions(previousRange),
+    },
+    allTime: {
+      focusTime: sumDuration(sortedAll),
+      sessions: sortedAll.length,
+      avgScore: avgScore(sortedAll),
+      longestStreak: allStreaks.longestStreak,
+    },
+    currentStreak: allStreaks.currentStreak,
+    weekly: {
+      labels: timeline.labels,
+      time: timeline.time,
+      score: timeline.score,
+    },
+    chartSubtitles: {
+      time: timeline.timeSubtitle,
+      score: timeline.scoreSubtitle,
+    },
+    periodCompare: {
+      labels: ["Focus Hours", "Sessions", "Avg Score", "Distractions"],
+      current: [
+        Number((sumDuration(inRange) / (1000 * 60 * 60)).toFixed(1)),
+        inRange.length,
+        avgScore(inRange) || 0,
+        sumDistractions(inRange),
+      ],
+      previous: [
+        Number((sumDuration(previousRange) / (1000 * 60 * 60)).toFixed(1)),
+        previousRange.length,
+        avgScore(previousRange) || 0,
+        sumDistractions(previousRange),
+      ],
+    },
+    scoreDistribution,
+    topSites,
+    choices: {
+      angel,
+      devil,
+      prevAngel,
+      prevDevil,
+    },
+    insights,
+    consistency14: activeDays14,
+    bestSession,
+    worstSession,
+    range,
+  };
+}
+
+function renderPeriodCompareChart(compare) {
+  const ctx = document.getElementById("chart-period-compare");
+  if (!ctx) return;
+  if (chartRefs.periodCompare) chartRefs.periodCompare.destroy();
+
+  chartRefs.periodCompare = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: compare.labels,
+      datasets: [
+        {
+          label: "Current",
+          data: compare.current,
+          backgroundColor: "rgba(244, 125, 91, 0.75)",
+          borderRadius: 6,
+        },
+        {
+          label: "Previous",
+          data: compare.previous,
+          backgroundColor: "rgba(171, 171, 171, 0.55)",
+          borderRadius: 6,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: "top",
+          labels: { boxWidth: 10, color: "#7A7A7A", font: { size: 11 } },
+        },
+        tooltip: {
+          backgroundColor: "#2D2D2D",
+          titleFont: { size: 11 },
+          bodyFont: { size: 12 },
+          padding: 10,
+          cornerRadius: 8,
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: "#ABABAB", font: { size: 11 } },
+          border: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: "rgba(240, 237, 233, 0.35)" },
+          ticks: { color: "#ABABAB", font: { size: 11 }, maxTicksLimit: 4 },
+          border: { display: false },
+        },
+      },
+    },
+  });
+}
+
+function renderScoreDistributionChart(distribution) {
+  const ctx = document.getElementById("chart-score-distribution");
+  if (!ctx) return;
+  if (chartRefs.scoreDistribution) chartRefs.scoreDistribution.destroy();
+
+  chartRefs.scoreDistribution = new Chart(ctx, {
+    type: "doughnut",
+    data: {
+      labels: ["High (80-100)", "Medium (50-79)", "Low (0-49)"],
+      datasets: [
+        {
+          data: [distribution.high, distribution.medium, distribution.low],
+          backgroundColor: ["#6BCF7F", "#FFB880", "#FF6B6B"],
+          borderWidth: 0,
+          hoverOffset: 4,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: "62%",
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { boxWidth: 10, color: "#7A7A7A", font: { size: 11 } },
+        },
+        tooltip: {
+          backgroundColor: "#2D2D2D",
+          titleFont: { size: 11 },
+          bodyFont: { size: 12 },
+          padding: 10,
+          cornerRadius: 8,
+          callbacks: {
+            label: (context) => {
+              const total = context.dataset.data.reduce((sum, value) => sum + value, 0) || 1;
+              const value = context.raw || 0;
+              const pct = Math.round((value / total) * 100);
+              return `${context.label}: ${value} sessions (${pct}%)`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+function formatDelta(value, suffix = "", invert = false) {
+  if (value === null || Number.isNaN(value)) return { text: "--", cls: "delta-neutral" };
+  if (value === 0) return { text: `0${suffix}`, cls: "delta-neutral" };
+  const positive = value > 0;
+  const cls = invert ? (positive ? "delta-neg" : "delta-pos") : positive ? "delta-pos" : "delta-neg";
+  const sign = positive ? "+" : "";
+  return { text: `${sign}${value}${suffix}`, cls };
+}
+
+function formatMinutesDelta(minutes) {
+  if (minutes === null || Number.isNaN(minutes)) return { text: "--", cls: "delta-neutral" };
+  if (minutes === 0) return { text: "0m", cls: "delta-neutral" };
+  const positive = minutes > 0;
+  const cls = positive ? "delta-pos" : "delta-neg";
+  if (Math.abs(minutes) >= 180) {
+    const sign = positive ? "+" : "-";
+    return { text: `${sign}${(Math.abs(minutes) / 60).toFixed(1)}h`, cls };
+  }
+  return { text: `${positive ? "+" : ""}${minutes}m`, cls };
+}
 
 function renderWeeklyTimeChart(labels, data) {
   const ctx = document.getElementById("chart-weekly-time");
   if (!ctx) return;
+  if (chartRefs.weeklyTime) chartRefs.weeklyTime.destroy();
 
-  // Convert ms to hours for display
   const hours = data.map((ms) => ms / (1000 * 60 * 60));
+  const gradient = ctx.getContext("2d").createLinearGradient(0, 0, 0, 240);
+  gradient.addColorStop(0, "rgba(244, 125, 91, 0.24)");
+  gradient.addColorStop(1, "rgba(244, 125, 91, 0.02)");
+  const xTickOptions = labels.length <= 8
+    ? { color: "#ABABAB", autoSkip: false, font: { size: 11 } }
+    : {
+        color: "#ABABAB",
+        font: { size: 11 },
+        autoSkip: false,
+        callback: (value, index) => {
+          const isLast = index === labels.length - 1;
+          return index % 2 === 0 || isLast ? labels[index] : "";
+        },
+      };
 
-  new Chart(ctx, {
+  chartRefs.weeklyTime = new Chart(ctx, {
     type: "line",
     data: {
       labels,
@@ -294,14 +674,14 @@ function renderWeeklyTimeChart(labels, data) {
           label: "Focus Time (hrs)",
           data: hours,
           borderColor: "#F47D5B",
-          backgroundColor: "rgba(244, 125, 91, 0.08)",
+          backgroundColor: gradient,
           fill: true,
-          tension: 0.4,
+          tension: 0.35,
           pointBackgroundColor: "#F47D5B",
           pointBorderColor: "#fff",
           pointBorderWidth: 2,
-          pointRadius: 5,
-          pointHoverRadius: 7,
+          pointRadius: 3,
+          pointHoverRadius: 5,
         },
       ],
     },
@@ -312,31 +692,27 @@ function renderWeeklyTimeChart(labels, data) {
         legend: { display: false },
         tooltip: {
           backgroundColor: "#2D2D2D",
-          titleFont: { family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto", size: 12 },
-          bodyFont: { family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto", size: 13 },
+          titleFont: { size: 11 },
+          bodyFont: { size: 12 },
+          displayColors: false,
           padding: 10,
           cornerRadius: 8,
           callbacks: {
-            label: (context) => {
-              const ms = data[context.dataIndex];
-              return `Focus: ${formatTime(ms)}`;
-            },
+            label: (context) => `Focus: ${formatTime(data[context.dataIndex] || 0)}`,
           },
         },
       },
       scales: {
         x: {
           grid: { display: false },
-          ticks: { font: { size: 11 }, color: "#ABABAB" },
+          ticks: xTickOptions,
+          border: { display: false },
         },
         y: {
           beginAtZero: true,
-          grid: { color: "rgba(240, 237, 233, 0.5)" },
-          ticks: {
-            font: { size: 11 },
-            color: "#ABABAB",
-            callback: (value) => value.toFixed(1) + "h",
-          },
+          grid: { color: "rgba(240, 237, 233, 0.35)" },
+          ticks: { color: "#ABABAB", callback: (v) => `${Number(v).toFixed(1)}h`, maxTicksLimit: 4, font: { size: 11 } },
+          border: { display: false },
         },
       },
     },
@@ -346,32 +722,28 @@ function renderWeeklyTimeChart(labels, data) {
 function renderWeeklyScoreChart(labels, data) {
   const ctx = document.getElementById("chart-weekly-score");
   if (!ctx) return;
+  if (chartRefs.weeklyScore) chartRefs.weeklyScore.destroy();
 
-  const bgColors = data.map((score) => {
-    if (score === null) return "rgba(240, 237, 233, 0.5)";
-    if (score >= 80) return "rgba(107, 207, 127, 0.7)";
-    if (score >= 50) return "rgba(255, 184, 128, 0.7)";
-    return "rgba(255, 107, 107, 0.7)";
-  });
+  const xTickOptions = labels.length <= 8
+    ? { color: "#ABABAB", autoSkip: false, font: { size: 11 } }
+    : {
+        color: "#ABABAB",
+        font: { size: 11 },
+        autoSkip: false,
+        callback: (value, index) => {
+          const isLast = index === labels.length - 1;
+          return index % 2 === 0 || isLast ? labels[index] : "";
+        },
+      };
 
-  const borderColors = data.map((score) => {
-    if (score === null) return "#F0EDE9";
-    if (score >= 80) return "#6BCF7F";
-    if (score >= 50) return "#FFB880";
-    return "#FF6B6B";
-  });
-
-  new Chart(ctx, {
+  chartRefs.weeklyScore = new Chart(ctx, {
     type: "bar",
     data: {
       labels,
       datasets: [
         {
-          label: "Focus Score (%)",
-          data: data.map((d) => d ?? 0),
-          backgroundColor: bgColors,
-          borderColor: borderColors,
-          borderWidth: 2,
+          data: data.map((v) => v ?? 0),
+          backgroundColor: data.map((v) => (v === null ? "rgba(240,237,233,0.6)" : v >= 80 ? "rgba(107,207,127,0.7)" : v >= 50 ? "rgba(255,184,128,0.7)" : "rgba(255,107,107,0.7)")),
           borderRadius: 6,
           borderSkipped: false,
         },
@@ -384,14 +756,14 @@ function renderWeeklyScoreChart(labels, data) {
         legend: { display: false },
         tooltip: {
           backgroundColor: "#2D2D2D",
-          titleFont: { family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto", size: 12 },
-          bodyFont: { family: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto", size: 13 },
+          titleFont: { size: 11 },
+          bodyFont: { size: 12 },
           padding: 10,
           cornerRadius: 8,
           callbacks: {
             label: (context) => {
               const score = data[context.dataIndex];
-              return score !== null ? `Score: ${score}%` : "No sessions";
+              return score === null ? "No sessions" : `Score: ${score}%`;
             },
           },
         },
@@ -399,246 +771,305 @@ function renderWeeklyScoreChart(labels, data) {
       scales: {
         x: {
           grid: { display: false },
-          ticks: { font: { size: 11 }, color: "#ABABAB" },
+          ticks: xTickOptions,
+          border: { display: false },
         },
         y: {
           beginAtZero: true,
           max: 100,
-          grid: { color: "rgba(240, 237, 233, 0.5)" },
-          ticks: {
-            font: { size: 11 },
-            color: "#ABABAB",
-            callback: (value) => value + "%",
-            stepSize: 25,
-          },
+          grid: { color: "rgba(240, 237, 233, 0.35)" },
+          ticks: { color: "#ABABAB", callback: (v) => `${v}%`, maxTicksLimit: 4, font: { size: 11 } },
+          border: { display: false },
         },
       },
     },
   });
 }
 
-// ===== DOM Rendering =====
-
 function renderNav(user, session) {
-  const usernameEl = document.getElementById("nav-username");
-  const avatarEl = document.getElementById("nav-avatar");
-  const badgeEl = document.getElementById("nav-session-badge");
-
-  if (user && user.name) {
-    usernameEl.textContent = user.name;
-    avatarEl.textContent = user.name.charAt(0).toUpperCase();
+  const usernameEl = byId("nav-username");
+  const avatarEl = byId("nav-avatar");
+  const badgeEl = byId("nav-session-badge");
+  if (user?.name) {
+    if (usernameEl) usernameEl.textContent = user.name;
+    if (avatarEl) avatarEl.textContent = user.name.charAt(0).toUpperCase();
   }
-
-  if (session && session.active) {
-    badgeEl.style.display = "flex";
-  }
+  if (badgeEl) badgeEl.style.display = session?.active ? "flex" : "none";
 }
 
 function renderHero(user, analytics) {
-  const dateEl = document.getElementById("hero-date");
-  const titleEl = document.getElementById("hero-title");
-  const subtitleEl = document.getElementById("hero-subtitle");
-  const streakEl = document.getElementById("streak-number");
+  const dateEl = byId("hero-date");
+  const titleEl = byId("hero-title");
+  const subtitleEl = byId("hero-subtitle");
+  const streakEl = byId("streak-number");
 
-  const now = new Date();
-  dateEl.textContent = now.toLocaleDateString("en-US", {
+  if (dateEl) {
+    dateEl.textContent = new Date().toLocaleDateString("en-US", {
     weekday: "long",
     month: "long",
     day: "numeric",
     year: "numeric",
   });
+  }
+  if (titleEl) titleEl.textContent = `Welcome back, ${user?.name || "there"}`;
 
-  const name = user && user.name ? escapeHtml(user.name) : "there";
-  const hour = now.getHours();
-  let greeting;
-  if (hour < 12) greeting = "Good morning";
-  else if (hour < 17) greeting = "Good afternoon";
-  else greeting = "Good evening";
-
-  titleEl.innerHTML = `${greeting}, ${name}`;
-
-  if (analytics.allTime.sessions === 0) {
-    subtitleEl.textContent = "Start your first focus session to see your stats.";
-  } else if (analytics.today.sessions > 0) {
-    subtitleEl.textContent = `You've completed ${analytics.today.sessions} session${analytics.today.sessions !== 1 ? "s" : ""} today. Keep it up!`;
-  } else {
-    subtitleEl.textContent = "Let's see how your focus journey is going.";
+  if (subtitleEl) {
+    if (!analytics.allTime.sessions) subtitleEl.textContent = "Start your first focus session to see your momentum.";
+    else if (state.dataSource === "demo") subtitleEl.textContent = `Demo mode: ${state.persona} persona, ${analytics.range.toUpperCase()} range.`;
+    else subtitleEl.textContent = `Tracking ${analytics.range.toUpperCase()} window. ${analytics.period.sessions} sessions in range.`;
   }
 
-  streakEl.textContent = analytics.currentStreak;
+  if (streakEl) streakEl.textContent = analytics.currentStreak;
+}
+
+function setDelta(elId, value, suffix = "", invert = false) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const out = formatDelta(value, suffix, invert);
+  el.textContent = out.text;
+  el.classList.remove("delta-pos", "delta-neg", "delta-neutral");
+  el.classList.add(out.cls);
 }
 
 function renderTodayStats(analytics) {
-  document.getElementById("today-focus-time").textContent =
-    analytics.today.focusTime > 0 ? formatTime(analytics.today.focusTime) : "0m";
-  document.getElementById("today-sessions").textContent = analytics.today.sessions;
-  document.getElementById("today-score").textContent =
-    analytics.today.avgScore !== null ? analytics.today.avgScore + "%" : "--";
-  document.getElementById("today-distractions").textContent = analytics.today.distractions;
+  const focusEl = byId("today-focus-time");
+  const sessionsEl = byId("today-sessions");
+  const scoreEl = byId("today-score");
+  const distractEl = byId("today-distractions");
+  if (focusEl) focusEl.textContent = analytics.today.focusTime ? formatTime(analytics.today.focusTime) : "0m";
+  if (sessionsEl) sessionsEl.textContent = analytics.today.sessions;
+  if (scoreEl) scoreEl.textContent = analytics.today.avgScore !== null ? `${analytics.today.avgScore}%` : "--";
+  if (distractEl) distractEl.textContent = analytics.today.distractions;
+
+  const focusDeltaEl = byId("delta-focus");
+  if (focusDeltaEl) {
+    const focusDelta = Math.round((analytics.period.focusTime - analytics.previous.focusTime) / 60000);
+    const out = formatMinutesDelta(focusDelta);
+    focusDeltaEl.textContent = out.text;
+    focusDeltaEl.classList.remove("delta-pos", "delta-neg", "delta-neutral");
+    focusDeltaEl.classList.add(out.cls);
+  }
+  setDelta("delta-sessions", analytics.period.sessions - analytics.previous.sessions);
+  const scoreDelta = analytics.period.avgScore !== null && analytics.previous.avgScore !== null
+    ? analytics.period.avgScore - analytics.previous.avgScore
+    : null;
+  setDelta("delta-score", scoreDelta, "%");
+  setDelta("delta-distractions", analytics.period.distractions - analytics.previous.distractions, "", true);
+  const consistencyEl = byId("consistency-value");
+  if (consistencyEl) consistencyEl.textContent = `${analytics.consistency14}/14 days`;
 }
 
 function renderAllTimeStats(analytics) {
-  document.getElementById("alltime-focus-time").textContent =
-    analytics.allTime.focusTime > 0 ? formatHours(analytics.allTime.focusTime) : "0h";
-  document.getElementById("alltime-sessions").textContent = analytics.allTime.sessions;
-  document.getElementById("alltime-score").textContent =
-    analytics.allTime.avgScore !== null ? analytics.allTime.avgScore + "%" : "--";
-  document.getElementById("alltime-streak").textContent = analytics.allTime.longestStreak;
+  const focusEl = byId("alltime-focus-time");
+  const sessionsEl = byId("alltime-sessions");
+  const scoreEl = byId("alltime-score");
+  const streakEl = byId("alltime-streak");
+  if (focusEl) focusEl.textContent = analytics.allTime.focusTime ? formatHours(analytics.allTime.focusTime) : "0h";
+  if (sessionsEl) sessionsEl.textContent = analytics.allTime.sessions;
+  if (scoreEl) scoreEl.textContent = analytics.allTime.avgScore !== null ? `${analytics.allTime.avgScore}%` : "--";
+  if (streakEl) streakEl.textContent = analytics.allTime.longestStreak;
 }
 
 function renderTopSites(topSites) {
-  const emptyEl = document.getElementById("distracting-sites-empty");
-  const listEl = document.getElementById("distracting-sites-list");
-
-  if (topSites.length === 0) {
+  const emptyEl = byId("distracting-sites-empty");
+  const listEl = byId("distracting-sites-list");
+  if (!emptyEl || !listEl) return;
+  if (!topSites.length) {
     emptyEl.style.display = "block";
     listEl.style.display = "none";
     return;
   }
-
   emptyEl.style.display = "none";
   listEl.style.display = "block";
 
-  const maxCount = topSites[0][1];
-
+  const maxCount = topSites[0].count;
   listEl.innerHTML = topSites
-    .map(
-      ([domain, count], i) => `
-    <div class="distraction-row">
-      <div class="distraction-rank">${i + 1}</div>
-      <div class="distraction-info">
-        <div class="distraction-domain">${escapeHtml(domain)}</div>
-        <div class="distraction-bar-bg">
-          <div class="distraction-bar-fill" style="width: ${Math.round((count / maxCount) * 100)}%;"></div>
+    .map((row, i) => {
+      const trendClass = row.delta > 0 ? "trend-up" : row.delta < 0 ? "trend-down" : "trend-flat";
+      const trendText = row.delta > 0 ? `+${row.delta}` : row.delta < 0 ? `${row.delta}` : "0";
+      return `
+        <div class="distraction-row">
+          <div class="distraction-rank">${i + 1}</div>
+          <div class="distraction-info">
+            <div class="distraction-domain">${escapeHtml(row.domain)}</div>
+            <div class="distraction-bar-bg">
+              <div class="distraction-bar-fill" style="width:${Math.round((row.count / maxCount) * 100)}%;"></div>
+            </div>
+          </div>
+          <div class="distraction-count">${row.count}x</div>
+          <div class="trend-chip ${trendClass}">${trendText}</div>
         </div>
-      </div>
-      <div class="distraction-count">${count}x</div>
-    </div>
-  `
-    )
+      `;
+    })
     .join("");
 }
 
 function renderChoices(choices) {
   const total = choices.angel + choices.devil;
-  const angelPct = total > 0 ? (choices.angel / total) * 100 : 50;
-  const devilPct = total > 0 ? (choices.devil / total) * 100 : 50;
+  const angelPct = total ? (choices.angel / total) * 100 : 50;
+  const devilPct = total ? (choices.devil / total) * 100 : 50;
 
-  document.getElementById("choices-angel-count").textContent = choices.angel;
-  document.getElementById("choices-devil-count").textContent = choices.devil;
-  document.getElementById("choices-bar-angel").style.width = angelPct + "%";
-  document.getElementById("choices-bar-devil").style.width = devilPct + "%";
+  const angelCountEl = byId("choices-angel-count");
+  const devilCountEl = byId("choices-devil-count");
+  const angelBarEl = byId("choices-bar-angel");
+  const devilBarEl = byId("choices-bar-devil");
+  if (angelCountEl) angelCountEl.textContent = choices.angel;
+  if (devilCountEl) devilCountEl.textContent = choices.devil;
+  if (angelBarEl) angelBarEl.style.width = `${angelPct}%`;
+  if (devilBarEl) devilBarEl.style.width = `${devilPct}%`;
 
-  const summaryEl = document.getElementById("choices-summary");
-  if (total === 0) {
-    summaryEl.textContent = "Make your first choice during a distraction to see stats here.";
-  } else if (angelPct >= 70) {
-    summaryEl.textContent = `You chose the Angel ${choices.angel} times. You're staying strong!`;
-  } else if (devilPct >= 70) {
-    summaryEl.textContent = `The Devil won ${choices.devil} times. Try to resist next time!`;
+  const summaryEl = byId("choices-summary");
+  if (summaryEl) {
+    if (!total) summaryEl.textContent = "No intervention choices yet in this range.";
+    else summaryEl.textContent = `Angel ${Math.round(angelPct)}% vs Devil ${Math.round(devilPct)}% in selected range.`;
+  }
+
+  const prevTotal = choices.prevAngel + choices.prevDevil;
+  const prevAngelPct = prevTotal ? (choices.prevAngel / prevTotal) * 100 : null;
+  const trendEl = byId("choices-trend-summary");
+  if (!trendEl) return;
+  if (prevAngelPct === null || !total) {
+    trendEl.textContent = "Trend appears once previous period has enough choices.";
   } else {
-    summaryEl.textContent = `It's a close battle! Angel: ${choices.angel}, Devil: ${choices.devil}.`;
+    const delta = Math.round(angelPct - prevAngelPct);
+    trendEl.textContent =
+      delta === 0
+        ? "Choice trend is stable vs previous period."
+        : delta > 0
+          ? `Angel choices improved by ${delta} points vs previous period.`
+          : `Devil choices increased by ${Math.abs(delta)} points vs previous period.`;
+  }
+}
+
+function renderSessionHighlights(bestSession, worstSession) {
+  const bestEl = byId("best-session-summary");
+  const worstEl = byId("improve-session-summary");
+  if (!bestEl || !worstEl) return;
+
+  if (!bestSession) {
+    bestEl.textContent = "Best session highlight will appear here.";
+  } else {
+    bestEl.textContent = `Best session: ${bestSession.topic || "Untitled"} (${formatTime(bestSession.duration || 0)}, ${bestSession.focusScore || 0}% focus).`;
+  }
+
+  if (!worstSession) {
+    worstEl.textContent = "Improvement opportunity will appear here.";
+  } else {
+    worstEl.textContent = `Improve this pattern: ${worstSession.topic || "Untitled"} had ${worstSession.distractions || 0} distractions with ${worstSession.focusScore || 0}% focus.`;
   }
 }
 
 function renderInsights(insights) {
-  if (insights.bestTime) {
-    document.getElementById("insight-best-time-title").textContent = "Best Study Time";
-    document.getElementById("insight-best-time-desc").textContent =
-      `You focus best around ${insights.bestTime.label} (avg score: ${insights.bestTime.score}%).`;
+  const setInsight = (idPrefix, value, fallback) => {
+    const titleEl = document.getElementById(`insight-${idPrefix}-title`);
+    const descEl = document.getElementById(`insight-${idPrefix}-desc`);
+    const confEl = document.getElementById(`insight-${idPrefix}-confidence`);
+    if (!titleEl || !descEl || !confEl) return;
+
+    if (!value) {
+      descEl.textContent = fallback;
+      confEl.textContent = "Need at least 2 sessions in this pattern.";
+      return;
+    }
+
+    if (idPrefix === "best-time") {
+      descEl.textContent = `You focus best around ${value.label} (avg ${value.score}%). ${value.recommendation}`;
+      confEl.textContent = `Based on ${insights.confidence.bestTime} sessions.`;
+    }
+    if (idPrefix === "optimal-length") {
+      descEl.textContent = `Your strongest block is ${value.label} (avg ${value.score}%). ${value.recommendation}`;
+      confEl.textContent = `Based on ${insights.confidence.optimalLength} sessions.`;
+    }
+    if (idPrefix === "best-day") {
+      descEl.textContent = `${value.label} performs best (avg ${value.score}%). ${value.recommendation}`;
+      confEl.textContent = `Based on ${insights.confidence.bestDay} sessions.`;
+    }
+  };
+
+  setInsight("best-time", insights.bestTime, "Complete a few sessions to see your patterns.");
+  setInsight("optimal-length", insights.optimalLength, "We'll analyze your data once you have more sessions.");
+  setInsight("best-day", insights.bestDay, "Keep studying to unlock day-of-week patterns.");
+
+  const alertEl = document.getElementById("insight-opportunity");
+  if (alertEl) alertEl.textContent = insights.opportunity;
+}
+
+function buildHistoryTable(sessions) {
+  if (!sessions.length) {
+    return `<div class="empty-state"><p>No sessions match your current filters.</p></div>`;
   }
 
-  if (insights.optimalLength) {
-    document.getElementById("insight-optimal-length-title").textContent = "Optimal Session Length";
-    document.getElementById("insight-optimal-length-desc").textContent =
-      `Your best sessions are ${insights.optimalLength.label} long (avg score: ${insights.optimalLength.score}%).`;
-  }
+  return `
+    <table class="history-table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Time</th>
+          <th>Topic</th>
+          <th>Duration</th>
+          <th>Focus Score</th>
+          <th>Distractions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${sessions
+          .map((s) => {
+            const d = new Date(s.startTime || s.endTime || Date.now());
+            const scoreClass = s.focusScore >= 80 ? "high" : s.focusScore >= 50 ? "med" : "low";
+            return `
+            <tr>
+              <td>${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</td>
+              <td>${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</td>
+              <td class="topic-cell" title="${escapeHtml(s.topic || "")}">${escapeHtml(s.topic || "Untitled")}</td>
+              <td>${formatTime(s.duration || 0)}</td>
+              <td><span class="score-badge ${scoreClass}">${s.focusScore != null ? `${s.focusScore}%` : "--"}</span></td>
+              <td>${s.distractions || 0}</td>
+            </tr>
+          `;
+          })
+          .join("")}
+      </tbody>
+    </table>
+  `;
+}
 
-  if (insights.bestDay) {
-    document.getElementById("insight-best-day-title").textContent = "Most Productive Day";
-    document.getElementById("insight-best-day-desc").textContent =
-      `${insights.bestDay.label} is your strongest day (avg score: ${insights.bestDay.score}%).`;
-  }
+function debounce(fn, delay = 200) {
+  let timer = null;
+  return (...args) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), delay);
+  };
 }
 
 function renderSessionHistory(sessions) {
-  const container = document.getElementById("history-table-container");
-  const emptyEl = document.getElementById("history-empty");
-
-  if (sessions.length === 0) {
-    emptyEl.style.display = "block";
-    return;
+  const container = byId("history-table-container");
+  if (!container) return;
+  const emptyEl = byId("history-empty");
+  let contentEl = byId("history-table-content");
+  if (!contentEl) {
+    contentEl = document.createElement("div");
+    contentEl.id = "history-table-content";
+    container.appendChild(contentEl);
   }
-
-  emptyEl.style.display = "none";
-
   const sorted = [...sessions].sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
 
-  const buildTable = (filtered) => {
-    if (filtered.length === 0) {
-      return `<div class="empty-state"><p>No sessions match your search.</p></div>`;
-    }
+  const filtered = state.searchQuery
+    ? sorted.filter((s) => (s.topic || "").toLowerCase().includes(state.searchQuery.toLowerCase()))
+    : sorted;
 
-    return `
-      <table class="history-table">
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Time</th>
-            <th>Topic</th>
-            <th>Duration</th>
-            <th>Focus Score</th>
-            <th>Distractions</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${filtered
-            .map((s) => {
-              const d = new Date(s.startTime || s.endTime || Date.now());
-              const dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-              const timeStr = d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
-              const scoreClass =
-                s.focusScore >= 80 ? "high" : s.focusScore >= 50 ? "med" : "low";
-              return `
-              <tr>
-                <td>${dateStr}</td>
-                <td>${timeStr}</td>
-                <td class="topic-cell" title="${escapeHtml(s.topic || "")}">${escapeHtml(s.topic || "Untitled")}</td>
-                <td>${formatTime(s.duration || 0)}</td>
-                <td><span class="score-badge ${scoreClass}">${s.focusScore != null ? s.focusScore + "%" : "--"}</span></td>
-                <td>${s.distractions || 0}</td>
-              </tr>`;
-            })
-            .join("")}
-        </tbody>
-      </table>
-    `;
-  };
-
-  container.innerHTML = buildTable(sorted);
-
-  // Search functionality
-  const searchInput = document.getElementById("history-search");
-  if (searchInput) {
-    searchInput.addEventListener("input", () => {
-      const query = searchInput.value.trim().toLowerCase();
-      if (!query) {
-        container.innerHTML = buildTable(sorted);
-        return;
-      }
-      const filtered = sorted.filter(
-        (s) => (s.topic || "").toLowerCase().includes(query)
-      );
-      container.innerHTML = buildTable(filtered);
-    });
+  if (!sorted.length) {
+    if (emptyEl) emptyEl.style.display = "block";
+    contentEl.innerHTML = "";
+  } else {
+    if (emptyEl) emptyEl.style.display = "none";
+    contentEl.innerHTML = buildHistoryTable(filtered);
   }
 
-  // CSV Export
   const exportBtn = document.getElementById("export-csv-btn");
   if (exportBtn) {
-    exportBtn.addEventListener("click", () => {
+    exportBtn.onclick = () => {
       const headers = ["Date", "Time", "Topic", "Duration (min)", "Focus Score (%)", "Distractions", "Distraction Time (min)"];
-      const rows = sorted.map((s) => {
+      const rows = filtered.map((s) => {
         const d = new Date(s.startTime || s.endTime || Date.now());
         return [
           d.toLocaleDateString("en-US"),
@@ -651,19 +1082,203 @@ function renderSessionHistory(sessions) {
         ].join(",");
       });
 
-      const csv = [headers.join(","), ...rows].join("\n");
-      const blob = new Blob([csv], { type: "text/csv" });
+      const blob = new Blob([[headers.join(","), ...rows].join("\n")], { type: "text/csv" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `focus-flow-sessions-${getTodayKey()}.csv`;
+      a.download = `focus-flow-${state.range}-${new Date().toISOString().slice(0, 10)}.csv`;
       a.click();
       URL.revokeObjectURL(url);
-    });
+    };
   }
 }
 
-// ===== Initialize Dashboard =====
+function seededRandom(seed) {
+  let t = seed + 0x6d2b79f5;
+  return () => {
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function generateDemoSessions(persona) {
+  const seed = persona === "new" ? 17 : persona === "active" ? 29 : 53;
+  const rand = seededRandom(seed);
+  const topics = ["DSA", "DBMS", "OS", "React", "System Design", "Python", "ML"];
+  const distractors = ["youtube.com", "instagram.com", "reddit.com", "x.com", "facebook.com"];
+  const days = persona === "new" ? 8 : persona === "active" ? 28 : 90;
+  const sessionsPerDay = persona === "new" ? [0, 1] : persona === "active" ? [0, 2] : [1, 3];
+  const sessions = [];
+
+  for (let d = days - 1; d >= 0; d -= 1) {
+    const date = new Date();
+    date.setDate(date.getDate() - d);
+    const restProbability = persona === "new" ? 0.5 : persona === "active" ? 0.25 : 0.12;
+    const isRestDay = rand() < restProbability;
+    const count = isRestDay
+      ? 0
+      : sessionsPerDay[0] + Math.floor(rand() * (sessionsPerDay[1] - sessionsPerDay[0] + 1));
+
+    for (let i = 0; i < count; i += 1) {
+      const start = new Date(date);
+      const hourBase = persona === "power" ? 8 : 10;
+      start.setHours(hourBase + Math.floor(rand() * 11), Math.floor(rand() * 60), 0, 0);
+
+      const durationMin = persona === "new"
+        ? 18 + Math.floor(rand() * 42)
+        : persona === "active"
+          ? 28 + Math.floor(rand() * 58)
+          : 35 + Math.floor(rand() * 80);
+      const duration = durationMin * 60000;
+
+      const distractionBase = persona === "new" ? 3 : persona === "active" ? 2 : 1;
+      const distractions = Math.max(0, distractionBase + Math.floor(rand() * 5) - 2);
+      const weeklyDip = (date.getDay() === 0 || date.getDay() === 6) ? -6 : 0;
+      const scoreBase = persona === "new" ? 56 : persona === "active" ? 72 : 84;
+      const focusScore = Math.max(32, Math.min(98, scoreBase + weeklyDip + Math.floor(rand() * 18) - distractions * 3));
+
+      const distractingSites = {};
+      for (let j = 0; j < distractions; j += 1) {
+        const site = distractors[Math.floor(rand() * distractors.length)];
+        distractingSites[site] = (distractingSites[site] || 0) + 1;
+      }
+
+      const angel = Math.floor(rand() * 3);
+      const devil = Math.floor(rand() * 2);
+
+      sessions.push({
+        topic: topics[Math.floor(rand() * topics.length)],
+        startTime: start.getTime(),
+        endTime: start.getTime() + duration,
+        duration,
+        focusScore,
+        distractions,
+        distractionTime: distractions * (2 + Math.floor(rand() * 5)) * 60000,
+        distractingSites,
+        choices: { angel, devil },
+      });
+    }
+  }
+
+  return sessions;
+}
+
+const demoSessionsByPersona = {
+  new: generateDemoSessions("new"),
+  active: generateDemoSessions("active"),
+  power: generateDemoSessions("power"),
+};
+
+function currentSessions() {
+  return state.dataSource === "demo"
+    ? demoSessionsByPersona[state.persona] || []
+    : state.liveSessions;
+}
+
+function getAnalyticsCached() {
+  const cacheKey = `${state.dataSource}:${state.persona}:${state.range}`;
+  if (!state.analyticsCache.has(cacheKey)) {
+    state.analyticsCache.set(cacheKey, computeAnalytics(currentSessions(), state.range));
+  }
+  return state.analyticsCache.get(cacheKey);
+}
+
+function syncControlActiveStyles() {
+  document.querySelectorAll("#range-group .control-chip").forEach((el) => {
+    el.classList.toggle("active", el.dataset.range === state.range);
+  });
+  document.querySelectorAll("#data-source-group .control-chip").forEach((el) => {
+    el.classList.toggle("active", el.dataset.source === state.dataSource);
+  });
+  document.querySelectorAll("#persona-group .control-chip").forEach((el) => {
+    el.classList.toggle("active", el.dataset.persona === state.persona);
+  });
+
+  const personaGroup = document.getElementById("persona-group");
+  const demoBadge = document.getElementById("demo-badge");
+  if (personaGroup) {
+    personaGroup.style.display = state.dataSource === "demo" ? "flex" : "none";
+  }
+  if (demoBadge) {
+    demoBadge.style.display = state.dataSource === "demo" ? "inline-flex" : "none";
+  }
+}
+
+function getTrendHeading(range) {
+  if (range === "30d") return "Monthly Trends";
+  if (range === "all") return "Long-Term Trends";
+  return "Weekly Trends";
+}
+
+function getCompareSubtitle(range) {
+  if (range === "30d") return "Current month vs previous month movement";
+  if (range === "all") return "Current long-term window vs previous window";
+  return "Current week vs previous week movement";
+}
+
+function renderAll(user, session) {
+  syncControlActiveStyles();
+  const analytics = getAnalyticsCached();
+
+  renderNav(user, session);
+  renderHero(user, analytics);
+  renderTodayStats(analytics);
+  renderAllTimeStats(analytics);
+  renderTopSites(analytics.topSites);
+  renderChoices(analytics.choices);
+  renderSessionHighlights(analytics.bestSession, analytics.worstSession);
+  renderInsights(analytics.insights);
+  renderSessionHistory(analytics.sessionsFiltered);
+
+  const trendsTitle = document.getElementById("trends-section-title");
+  if (trendsTitle) {
+    trendsTitle.textContent = getTrendHeading(state.range);
+  }
+  const timeSubtitle = document.getElementById("chart-time-subtitle");
+  const scoreSubtitle = document.getElementById("chart-score-subtitle");
+  const compareSubtitle = document.getElementById("chart-compare-subtitle");
+  if (timeSubtitle) timeSubtitle.textContent = analytics.chartSubtitles.time;
+  if (scoreSubtitle) scoreSubtitle.textContent = analytics.chartSubtitles.score;
+  if (compareSubtitle) compareSubtitle.textContent = getCompareSubtitle(state.range);
+
+  renderWeeklyTimeChart(analytics.weekly.labels, analytics.weekly.time);
+  renderWeeklyScoreChart(analytics.weekly.labels, analytics.weekly.score);
+  renderPeriodCompareChart(analytics.periodCompare);
+  renderScoreDistributionChart(analytics.scoreDistribution);
+}
+
+function setupControls(user, session) {
+  document.querySelectorAll("#range-group .control-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.range = btn.dataset.range;
+      renderAll(user, session);
+    });
+  });
+
+  document.querySelectorAll("#data-source-group .control-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.dataSource = btn.dataset.source;
+      renderAll(user, session);
+    });
+  });
+
+  document.querySelectorAll("#persona-group .control-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.persona = btn.dataset.persona;
+      renderAll(user, session);
+    });
+  });
+
+  const searchInput = document.getElementById("history-search");
+  if (searchInput) {
+    const onInput = debounce((value) => {
+      state.searchQuery = value;
+      renderSessionHistory(getAnalyticsCached().sessionsFiltered);
+    }, 200);
+    searchInput.addEventListener("input", () => onInput(searchInput.value.trim()));
+  }
+}
 
 async function init() {
   const { user, session, sessionHistory = [] } = await chrome.storage.local.get([
@@ -672,22 +1287,14 @@ async function init() {
     "sessionHistory",
   ]);
 
-  // Compute analytics
-  const analytics = computeAnalytics(sessionHistory);
-
-  // Render all sections
-  renderNav(user, session);
-  renderHero(user, analytics);
-  renderTodayStats(analytics);
-  renderAllTimeStats(analytics);
-  renderTopSites(analytics.topSites);
-  renderChoices(analytics.choices);
-  renderInsights(analytics.insights);
-  renderSessionHistory(sessionHistory);
-
-  // Render charts
-  renderWeeklyTimeChart(analytics.weekly.labels, analytics.weekly.time);
-  renderWeeklyScoreChart(analytics.weekly.labels, analytics.weekly.score);
+  state.liveSessions = sessionHistory;
+  if (sessionHistory.length < 5) {
+    state.dataSource = "demo";
+    state.persona = "power";
+    state.range = "30d";
+  }
+  setupControls(user, session);
+  renderAll(user, session);
 }
 
 init();

@@ -43,6 +43,26 @@
       </div>
     </section>
 
+    <section class="section section-tight">
+      <div class="dashboard-controls">
+        <div class="control-group" id="data-source-group">
+          <button class="control-chip active" data-source="live">Live Data</button>
+          <button class="control-chip" data-source="demo">Demo Data</button>
+          <span class="demo-badge" id="demo-badge" style="display:none;">Demo Data</span>
+        </div>
+        <div class="control-group" id="persona-group" style="display:none;">
+          <button class="control-chip active" data-persona="new">New User</button>
+          <button class="control-chip" data-persona="active">Active Week</button>
+          <button class="control-chip" data-persona="power">Power Month</button>
+        </div>
+        <div class="control-group" id="range-group">
+          <button class="control-chip active" data-range="7d">7D</button>
+          <button class="control-chip" data-range="30d">30D</button>
+          <button class="control-chip" data-range="all">All</button>
+        </div>
+      </div>
+    </section>
+
     <!-- Today's Summary -->
     <section class="section">
       <h2 class="section-title">Today's Summary</h2>
@@ -68,24 +88,45 @@
           <div class="stat-card-label">Distractions</div>
         </div>
       </div>
+      <div class="delta-strip" id="delta-strip">
+        <div class="delta-item"><span class="delta-label">Focus vs prev</span><span class="delta-value" id="delta-focus">--</span></div>
+        <div class="delta-item"><span class="delta-label">Sessions vs prev</span><span class="delta-value" id="delta-sessions">--</span></div>
+        <div class="delta-item"><span class="delta-label">Score vs prev</span><span class="delta-value" id="delta-score">--</span></div>
+        <div class="delta-item"><span class="delta-label">Distractions vs prev</span><span class="delta-value" id="delta-distractions">--</span></div>
+        <div class="delta-item"><span class="delta-label">Consistency</span><span class="delta-value" id="consistency-value">--</span></div>
+      </div>
     </section>
 
     <!-- Weekly Trends -->
     <section class="section">
-      <h2 class="section-title">Weekly Trends</h2>
+      <h2 class="section-title" id="trends-section-title">Weekly Trends</h2>
       <div class="charts-grid">
         <div class="chart-card">
           <h3 class="chart-card-title">Focus Time</h3>
-          <p class="chart-card-subtitle">Hours per day, last 7 days</p>
+          <p class="chart-card-subtitle" id="chart-time-subtitle">Hours per day, last 7 days</p>
           <div class="chart-container">
             <canvas id="chart-weekly-time"></canvas>
           </div>
         </div>
         <div class="chart-card">
           <h3 class="chart-card-title">Focus Score</h3>
-          <p class="chart-card-subtitle">Average score per day</p>
+          <p class="chart-card-subtitle" id="chart-score-subtitle">Average score per day</p>
           <div class="chart-container">
             <canvas id="chart-weekly-score"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <h3 class="chart-card-title">Current vs Previous</h3>
+          <p class="chart-card-subtitle" id="chart-compare-subtitle">Snapshot of key metric movement</p>
+          <div class="chart-container">
+            <canvas id="chart-period-compare"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <h3 class="chart-card-title">Score Distribution</h3>
+          <p class="chart-card-subtitle">How sessions are spread by focus score</p>
+          <div class="chart-container">
+            <canvas id="chart-score-distribution"></canvas>
           </div>
         </div>
       </div>
@@ -135,6 +176,7 @@
               <div class="insight-text">
                 <div class="insight-title" id="insight-best-time-title">Best Study Time</div>
                 <div class="insight-desc" id="insight-best-time-desc">Complete a few sessions to see your patterns.</div>
+                <div class="insight-confidence" id="insight-best-time-confidence"></div>
               </div>
             </div>
             <div class="insight-card">
@@ -142,6 +184,7 @@
               <div class="insight-text">
                 <div class="insight-title" id="insight-optimal-length-title">Optimal Session Length</div>
                 <div class="insight-desc" id="insight-optimal-length-desc">We'll analyze your data once you have more sessions.</div>
+                <div class="insight-confidence" id="insight-optimal-length-confidence"></div>
               </div>
             </div>
             <div class="insight-card">
@@ -149,8 +192,10 @@
               <div class="insight-text">
                 <div class="insight-title" id="insight-best-day-title">Most Productive Day</div>
                 <div class="insight-desc" id="insight-best-day-desc">Keep studying to unlock day-of-week patterns.</div>
+                <div class="insight-confidence" id="insight-best-day-confidence"></div>
               </div>
             </div>
+            <div class="insight-alert" id="insight-opportunity">Opportunity: keep logging sessions to unlock recommendations.</div>
           </div>
         </div>
       </div>
@@ -177,6 +222,9 @@
           </div>
         </div>
         <p class="choices-summary" id="choices-summary">Make your first choice during a distraction to see stats here.</p>
+        <p class="choices-summary" id="choices-trend-summary">Trend appears after enough sessions.</p>
+        <p class="choices-summary" id="best-session-summary">Best session highlight will appear here.</p>
+        <p class="choices-summary" id="improve-session-summary">Improvement opportunity will appear here.</p>
       </div>
     </section>
 

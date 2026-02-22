@@ -153,6 +153,49 @@ body {
   margin-top: 48px;
 }
 
+.section-tight {
+  margin-top: 20px;
+}
+
+.dashboard-controls {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.control-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.control-chip {
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text-light);
+  border-radius: var(--radius-full);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.control-chip.active {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+
+.demo-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--warning);
+  background: var(--warning-bg);
+  border-radius: var(--radius-full);
+  padding: 4px 10px;
+}
+
 .section-warm {
   background: var(--bg-warm);
   margin-left: -48px;
@@ -331,36 +374,71 @@ body {
   margin-top: 6px;
 }
 
+.delta-strip {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+}
+
+.delta-item {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.delta-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.delta-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.delta-pos { color: var(--success-dark); }
+.delta-neg { color: var(--error); }
+.delta-neutral { color: var(--text-light); }
+
 /* ===== Charts ===== */
 .charts-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 20px;
+  gap: 18px;
 }
 
 .chart-card {
   background: var(--bg-card);
   border-radius: var(--radius);
-  padding: 28px;
+  padding: 22px 22px 18px;
   box-shadow: var(--shadow-card);
+  border: 1px solid var(--border-light);
 }
 
 .chart-card-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--text);
-  margin-bottom: 2px;
+  margin-bottom: 4px;
+  line-height: 1.3;
 }
 
 .chart-card-subtitle {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--text-muted);
-  margin-bottom: 20px;
+  margin-bottom: 12px;
+  line-height: 1.35;
 }
 
 .chart-container {
   position: relative;
-  height: 220px;
+  height: 240px;
 }
 
 /* ===== Two Column Layout ===== */
@@ -458,6 +536,28 @@ body {
   flex-shrink: 0;
 }
 
+.trend-chip {
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-full);
+  padding: 3px 8px;
+  background: var(--bg);
+}
+
+.trend-up {
+  color: var(--error);
+  background: var(--error-bg);
+}
+
+.trend-down {
+  color: var(--success-dark);
+  background: var(--success-bg);
+}
+
+.trend-flat {
+  color: var(--text-light);
+}
+
 /* ===== Insights ===== */
 .insights-list {
   display: flex;
@@ -497,6 +597,22 @@ body {
   font-size: 13px;
   color: var(--text-light);
   line-height: 1.4;
+}
+
+.insight-confidence {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.insight-alert {
+  margin-top: 8px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-light);
 }
 
 /* ===== Angel vs Devil Choices ===== */
@@ -748,8 +864,17 @@ body {
   .stats-grid-4 {
     grid-template-columns: repeat(2, 1fr);
   }
+  .delta-strip {
+    grid-template-columns: repeat(2, 1fr);
+  }
   .charts-grid {
     grid-template-columns: 1fr;
+  }
+  .chart-card {
+    padding: 20px 18px 16px;
+  }
+  .chart-container {
+    height: 220px;
   }
   .two-col {
     grid-template-columns: 1fr;
@@ -799,6 +924,19 @@ body {
   .hero-title {
     font-size: 24px;
   }
+  .chart-card {
+    padding: 18px 16px 14px;
+  }
+  .chart-card-title {
+    font-size: 14px;
+  }
+  .chart-card-subtitle {
+    font-size: 11px;
+    margin-bottom: 10px;
+  }
+  .chart-container {
+    height: 205px;
+  }
   .stat-card-value {
     font-size: 22px;
   }
@@ -811,6 +949,13 @@ body {
   }
   .section-actions {
     width: 100%;
+  }
+  .dashboard-controls {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .delta-strip {
+    grid-template-columns: 1fr;
   }
   .search-input {
     flex: 1;

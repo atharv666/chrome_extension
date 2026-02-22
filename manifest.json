@@ -3,7 +3,7 @@
   "name": "Focus Flow",
   "version": "1.0",
   "description": "Distraction detection study helper",
-  "permissions": ["storage", "tabs", "alarms"],
+  "permissions": ["storage", "tabs", "alarms", "notifications"],
   "host_permissions": ["http://*/*", "https://*/*"],
   "icons": {
     "16": "icons/icon16.png",

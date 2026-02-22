@@ -1,7 +1,18 @@
 // ===== Focus Flow - Popup Logic =====
 
 import { register, login, logout, isAuthenticated, getCurrentUser } from "./auth.js";
-import { saveUserProfile, loadUserProfile, saveSessionToCloud } from "./sync.js";
+import {
+  saveUserProfile,
+  loadUserProfile,
+  saveSessionToCloud,
+  createActiveSession,
+  updateActiveSession,
+  endActiveSession,
+  getCurrentSessionId,
+  loadActiveSession,
+  clearStaleSession,
+  isSessionStale,
+} from "./sync.js";
 
 const app = document.getElementById("app");
 
@@ -107,7 +118,9 @@ async function init() {
         if (session && session.active) {
           showActiveSession(session, profile);
         } else {
-          showMain(profile);
+          // Check for active session in Firestore before showing main
+          const resumed = await checkAndResumeCloudSession(profile);
+          if (!resumed) showMain(profile);
         }
         return;
       }
@@ -118,8 +131,124 @@ async function init() {
   } else if (session && session.active) {
     showActiveSession(session, user);
   } else {
-    showMain(user);
+    // No local active session — check Firestore for one from another device
+    const resumed = await checkAndResumeCloudSession(user);
+    if (!resumed) showMain(user);
   }
+}
+
+/**
+ * Check Firestore for a currentSessionId and offer to resume it.
+ * Returns true if a session was resumed or handled, false to continue normal flow.
+ */
+async function checkAndResumeCloudSession(user) {
+  try {
+    const currentSessionId = await getCurrentSessionId();
+    if (!currentSessionId) return false;
+
+    const cloudSession = await loadActiveSession(currentSessionId);
+    if (!cloudSession) {
+      // Session ID set but document missing — clear it
+      await clearStaleSession(currentSessionId);
+      return false;
+    }
+
+    // Check if session is stale (>24 hours)
+    if (isSessionStale(cloudSession.startTime)) {
+      await clearStaleSession(currentSessionId);
+      return false;
+    }
+
+    // Show resume dialog and wait for user decision
+    const choice = await showResumeDialog(cloudSession);
+
+    if (choice === "resume") {
+      // Restore session locally with elapsed time calculated from startTime
+      const resumedSession = {
+        active: true,
+        topic: cloudSession.topic,
+        allowedSites: cloudSession.allowedSites || [],
+        startTime: cloudSession.startTime,
+        firestoreSessionId: currentSessionId,
+        distractionStats: {
+          count: cloudSession.distractions || 0,
+          totalTime: cloudSession.distractionTime || 0,
+          sites: cloudSession.distractingSites || {},
+          choices: cloudSession.choices || { angel: 0, devil: 0 },
+        },
+      };
+
+      await chrome.storage.local.set({ session: resumedSession });
+      chrome.runtime.sendMessage({ action: "sessionStarted" });
+      showActiveSession(resumedSession, user);
+      return true;
+    } else {
+      // User chose "Start New" — end the cloud session
+      await endActiveSession(currentSessionId, {
+        topic: cloudSession.topic,
+        startTime: cloudSession.startTime,
+        endTime: Date.now(),
+        duration: Date.now() - cloudSession.startTime,
+        focusScore: cloudSession.focusScore || 100,
+        distractions: cloudSession.distractions || 0,
+        distractionTime: cloudSession.distractionTime || 0,
+        distractingSites: cloudSession.distractingSites || {},
+        choices: cloudSession.choices || { angel: 0, devil: 0 },
+      });
+      return false;
+    }
+  } catch (e) {
+    console.warn("Focus Flow: failed to check cloud session", e);
+    return false;
+  }
+}
+
+// ===== Screen: Resume Session Dialog =====
+
+/**
+ * Show a dialog asking the user to resume a session from another device.
+ * Returns a Promise that resolves to "resume" or "new".
+ */
+function showResumeDialog(cloudSession) {
+  return new Promise((resolve) => {
+    const elapsed = Date.now() - (cloudSession.startTime || Date.now());
+    const elapsedStr = formatTime(elapsed);
+    const topic = cloudSession.topic || "Untitled";
+
+    app.innerHTML = `
+      <div class="screen" style="text-align:center;">
+        <div class="success-icon" style="background:#FFF0EB;">&#128260;</div>
+
+        <h2>Active Session Found</h2>
+        <p style="margin-bottom:16px;">You have a session running on another device.</p>
+
+        <div class="success-details">
+          <div class="success-detail-row">
+            <span class="label">Topic</span>
+            <span class="value">${escapeHtml(topic)}</span>
+          </div>
+          <div class="success-detail-row">
+            <span class="label">Time Elapsed</span>
+            <span class="value">${elapsedStr}</span>
+          </div>
+          ${
+            cloudSession.distractions > 0
+              ? `<div class="success-detail-row">
+                  <span class="label">Distractions</span>
+                  <span class="value">${cloudSession.distractions}</span>
+                </div>`
+              : ""
+          }
+        </div>
+
+        <button class="btn btn-primary" id="resume-session-btn">Resume Session</button>
+        <button class="btn btn-ghost" id="new-session-btn">Start New Session</button>
+      </div>
+    `;
+
+    document.getElementById("resume-session-btn").onclick = () => resolve("resume");
+    document.getElementById("new-session-btn").onclick = () => resolve("new");
+  });
 }
 
 // ===== Screen: Login =====
@@ -535,12 +664,44 @@ async function handleStartSession() {
     return;
   }
 
+  // Check Firestore for existing active session before starting
+  try {
+    const existingSessionId = await getCurrentSessionId();
+    if (existingSessionId) {
+      const existingSession = await loadActiveSession(existingSessionId);
+      if (existingSession && !isSessionStale(existingSession.startTime)) {
+        // Show resume dialog instead of a blocking error
+        const { user } = await chrome.storage.local.get(["user"]);
+        const resumed = await checkAndResumeCloudSession(user);
+        if (resumed) return; // User chose to resume — done
+        // User chose "Start New" — old session was already ended by the dialog, continue below
+      } else if (existingSession) {
+        // Stale session — clear it before starting new
+        await clearStaleSession(existingSessionId);
+      }
+    }
+  } catch (e) {
+    // Network error — proceed with local session anyway
+    console.warn("Focus Flow: could not check cloud session, proceeding locally", e);
+  }
+
   const session = {
     active: true,
     topic: topic,
     allowedSites: [...allowedSites],
     startTime: Date.now(),
   };
+
+  // Create session in Firestore and store the ID locally
+  try {
+    const firestoreSessionId = await createActiveSession(session);
+    if (firestoreSessionId) {
+      session.firestoreSessionId = firestoreSessionId;
+    }
+  } catch (e) {
+    // Firestore create failed — continue with local-only session
+    console.warn("Focus Flow: failed to create cloud session", e);
+  }
 
   await chrome.storage.local.set({ session });
   chrome.runtime.sendMessage({ action: "sessionStarted" });
@@ -751,8 +912,19 @@ async function endSession(session, user) {
   // Save to local history
   await saveSessionHistoryLocal(sessionRecord);
 
-  // Save to Firestore (fire and forget — don't block UI on network)
-  saveSessionToCloud(sessionRecord).catch(() => {});
+  // End session in Firestore (update final stats + clear currentSessionId)
+  const firestoreSessionId =
+    (freshSession && freshSession.firestoreSessionId) ||
+    session.firestoreSessionId;
+
+  if (firestoreSessionId) {
+    endActiveSession(firestoreSessionId, sessionRecord).catch((e) => {
+      console.warn("Focus Flow: failed to end cloud session", e);
+    });
+  } else {
+    // No Firestore session ID — fallback to legacy save
+    saveSessionToCloud(sessionRecord).catch(() => {});
+  }
 
   await chrome.storage.local.remove("session");
   chrome.runtime.sendMessage({ action: "sessionEnded" });
@@ -928,6 +1100,33 @@ async function saveSessionHistoryLocal(record) {
 
   await chrome.storage.local.set({ sessionHistory });
 }
+
+// ===== Remote Session End Listener =====
+// Background sends this when the phone app ends the session remotely
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.action === "sessionEndedRemotely" && msg.sessionRecord) {
+    // Stop the timer if running
+    if (timerInterval) {
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+
+    const record = msg.sessionRecord;
+    const duration = record.duration || 0;
+    const topic = record.topic || "Untitled";
+    const stats = {
+      count: record.distractions || 0,
+      totalTime: record.distractionTime || 0,
+      choices: record.choices || { angel: 0, devil: 0 },
+    };
+
+    // Show session summary in the popup
+    chrome.storage.local.get(["user"], (res) => {
+      showSessionSummary(duration, topic, res.user, stats);
+    });
+  }
+});
 
 // ===== Initialize =====
 

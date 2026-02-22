@@ -1,4 +1,6 @@
 import { Chart, registerables } from "chart.js";
+import { loadAllSessionHistory } from "./sync.js";
+import { waitForAuth } from "./auth.js";
 
 Chart.register(...registerables);
 
@@ -1280,6 +1282,36 @@ function setupControls(user, session) {
   }
 }
 
+/**
+ * Deduplicate sessions by startTime + topic + duration key.
+ */
+function deduplicateSessions(sessions) {
+  const seen = new Set();
+  return sessions.filter((s) => {
+    const key = `${s.startTime}_${s.topic}_${s.duration}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/**
+ * Show an offline warning banner at the top of the dashboard.
+ */
+function showOfflineBanner() {
+  const container = document.querySelector(".dashboard-container") || document.body;
+  const existing = document.getElementById("offline-banner");
+  if (existing) return; // already shown
+
+  const banner = document.createElement("div");
+  banner.id = "offline-banner";
+  banner.style.cssText =
+    "background:#FFF4E6;border:1px solid #FFB366;border-radius:8px;padding:12px 16px;margin:12px 24px;font-size:13px;color:#996633;text-align:center;";
+  banner.textContent =
+    "Showing cached sessions from this device. Connect to internet for full cross-device history.";
+  container.prepend(banner);
+}
+
 async function init() {
   const { user, session, sessionHistory = [] } = await chrome.storage.local.get([
     "user",
@@ -1287,12 +1319,29 @@ async function init() {
     "sessionHistory",
   ]);
 
-  state.liveSessions = sessionHistory;
-  if (sessionHistory.length < 5) {
-    state.dataSource = "demo";
-    state.persona = "power";
-    state.range = "30d";
+  // Wait for Firebase Auth to initialize before querying Firestore
+  await waitForAuth();
+
+  // Load sessions from Firestore (primary), fall back to local cache
+  let sessions = [];
+  try {
+    const cloudSessions = await loadAllSessionHistory();
+    // Filter out active sessions (no endTime) and deduplicate
+    sessions = deduplicateSessions(cloudSessions.filter((s) => s.endTime));
+  } catch (e) {
+    console.warn("Focus Flow Dashboard: Failed to load cloud sessions, using local cache", e);
+    sessions = deduplicateSessions(
+      (sessionHistory || []).filter((s) => s.endTime)
+    );
+    showOfflineBanner();
   }
+
+  state.liveSessions = sessions;
+  state.dataSource = "live";
+
+  // Smart default range: 7d if fewer than 10 sessions, 30d otherwise
+  state.range = sessions.length >= 10 ? "30d" : "7d";
+
   setupControls(user, session);
   renderAll(user, session);
 }

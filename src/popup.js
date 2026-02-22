@@ -1,10 +1,11 @@
 // ===== Focus Flow - Popup Logic =====
 
-import { register, login, logout, isAuthenticated, getCurrentUser } from "./auth.js";
+import { register, login, logout, isAuthenticated, getCurrentUser, waitForAuth } from "./auth.js";
 import {
   saveUserProfile,
   loadUserProfile,
   saveSessionToCloud,
+  loadAllSessionHistory,
   createActiveSession,
   updateActiveSession,
   endActiveSession,
@@ -994,10 +995,10 @@ async function showHistory() {
       <div class="header">
         <div class="brand">Focus Flow</div>
         <h1>Session History</h1>
-        <p class="subtitle">Your recent study sessions.</p>
+        <p class="subtitle">Your focus journey across all devices.</p>
       </div>
       <div id="history-content">
-        <div class="history-loading">Loading...</div>
+        <div class="history-loading">Loading sessions...</div>
       </div>
       <button class="btn btn-ghost" id="history-back-btn">Back</button>
     </div>
@@ -1008,11 +1009,29 @@ async function showHistory() {
     showMain(user);
   };
 
-  // Load from local storage
-  const { sessionHistory = [] } = await chrome.storage.local.get(["sessionHistory"]);
   const contentEl = document.getElementById("history-content");
+  let sessions = [];
+  let isFromCloud = false;
 
-  if (sessionHistory.length === 0) {
+  try {
+    // Wait for Firebase Auth to initialize before querying Firestore
+    await waitForAuth();
+    // Load from Firestore (cross-device data)
+    const cloudSessions = await loadAllSessionHistory();
+    sessions = cloudSessions;
+    isFromCloud = true;
+  } catch (e) {
+    console.warn("Focus Flow: Failed to load cloud history, using local cache", e);
+    // Fallback to local storage
+    const { sessionHistory = [] } = await chrome.storage.local.get(["sessionHistory"]);
+    sessions = sessionHistory;
+  }
+
+  // Filter out sessions that have no endTime (still active) and deduplicate
+  const completed = sessions.filter((s) => s.endTime);
+  const deduped = deduplicateSessions(completed);
+
+  if (deduped.length === 0) {
     contentEl.innerHTML = `
       <div class="history-empty">
         <div class="history-empty-icon">&#128218;</div>
@@ -1026,7 +1045,7 @@ async function showHistory() {
   }
 
   // Sort most recent first
-  const sorted = [...sessionHistory].sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
+  const sorted = [...deduped].sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
 
   // Group sessions by date
   const grouped = {};
@@ -1037,11 +1056,22 @@ async function showHistory() {
     grouped[key].push(s);
   }
 
-  let html = '<div class="history-list">';
-  for (const [dateLabel, sessions] of Object.entries(grouped)) {
+  let html = "";
+
+  // Show offline warning if using local cache
+  if (!isFromCloud) {
+    html += `
+      <div style="background:var(--bg-warm,#FFF4E6);border:1px solid #FFB366;border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:#996633;">
+        Showing cached sessions from this device. Connect to internet for cross-device history.
+      </div>
+    `;
+  }
+
+  html += '<div class="history-list">';
+  for (const [dateLabel, dateSessions] of Object.entries(grouped)) {
     html += `<div class="history-date-group">
       <div class="history-date-label">${escapeHtml(dateLabel)}</div>`;
-    for (const s of sessions) {
+    for (const s of dateSessions) {
       const startDate = new Date(s.startTime || s.endTime || Date.now());
       const timeStr = startDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
       const scoreClass = s.focusScore >= 80 ? "high" : s.focusScore >= 50 ? "med" : "low";
@@ -1086,14 +1116,27 @@ async function showHistory() {
   contentEl.innerHTML = summaryHtml + html;
 }
 
-// ===== Session History (Local) =====
+/**
+ * Deduplicate sessions by startTime + topic + duration key.
+ */
+function deduplicateSessions(sessions) {
+  const seen = new Set();
+  return sessions.filter((s) => {
+    const key = `${s.startTime}_${s.topic}_${s.duration}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+// ===== Session History (Local Cache) =====
 
 async function saveSessionHistoryLocal(record) {
   const { sessionHistory = [] } = await chrome.storage.local.get(["sessionHistory"]);
 
   sessionHistory.push(record);
 
-  // Keep last 50 sessions
+  // Keep last 50 sessions as offline cache
   if (sessionHistory.length > 50) {
     sessionHistory.splice(0, sessionHistory.length - 50);
   }

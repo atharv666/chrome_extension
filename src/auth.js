@@ -12,6 +12,13 @@ import {
 
 // ===== Auth State Management =====
 
+// Promise that resolves once Firebase Auth has determined the initial auth state.
+// auth.currentUser is null until onAuthStateChanged fires for the first time.
+let _authReady;
+const _authReadyPromise = new Promise((resolve) => {
+  _authReady = resolve;
+});
+
 // Persist auth state to chrome.storage so background/content scripts can access it
 async function persistAuthState(user) {
   if (user) {
@@ -32,6 +39,7 @@ async function persistAuthState(user) {
 // Listen for auth state changes and persist
 onAuthStateChanged(auth, (user) => {
   persistAuthState(user);
+  _authReady(); // resolve on first (and every subsequent) call
 });
 
 // ===== Public API =====
@@ -76,6 +84,16 @@ export async function logout() {
  * Get current Firebase user (null if not signed in).
  */
 export function getCurrentUser() {
+  return auth.currentUser;
+}
+
+/**
+ * Wait for Firebase Auth to finish initializing.
+ * Resolves with the current user (or null if not signed in).
+ * Must be awaited before calling getCurrentUser() or any sync.js function.
+ */
+export async function waitForAuth() {
+  await _authReadyPromise;
   return auth.currentUser;
 }
 

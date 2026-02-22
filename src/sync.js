@@ -91,7 +91,59 @@ export async function loadSessionHistory(count = 50) {
   );
 
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  return snap.docs.map((d) => normalizeSessionDoc(d));
+}
+
+/**
+ * Load ALL session history from Firestore (no limit).
+ * Used by dashboard and popup history for full cross-device data.
+ * Returns array of session objects with normalized timestamps (most recent first).
+ */
+export async function loadAllSessionHistory() {
+  const user = getCurrentUser();
+  if (!user) return [];
+
+  const q = query(
+    collection(db, "users", user.uid, "sessions"),
+    orderBy("createdAt", "desc")
+  );
+
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => normalizeSessionDoc(d));
+}
+
+/**
+ * Normalize a Firestore session document snapshot.
+ * Converts Firestore Timestamp objects to milliseconds and ensures consistent shape.
+ */
+function normalizeSessionDoc(docSnap) {
+  const data = docSnap.data();
+  return {
+    id: docSnap.id,
+    topic: data.topic || "",
+    duration: data.duration || 0,
+    startTime: toMillis(data.startTime),
+    endTime: toMillis(data.endTime),
+    focusScore: data.focusScore != null ? data.focusScore : 100,
+    distractions: data.distractions || 0,
+    distractionTime: data.distractionTime || 0,
+    distractingSites: data.distractingSites || {},
+    choices: data.choices || { angel: 0, devil: 0 },
+    allowedSites: data.allowedSites || [],
+    createdAt: toMillis(data.createdAt),
+  };
+}
+
+/**
+ * Convert a value to milliseconds.
+ * Handles Firestore Timestamp objects, plain numbers, and null/undefined.
+ */
+function toMillis(value) {
+  if (!value) return null;
+  if (typeof value === "number") return value;
+  if (typeof value.toMillis === "function") return value.toMillis();
+  if (value.seconds != null) return value.seconds * 1000 + (value.nanoseconds || 0) / 1e6;
+  return null;
 }
 
 // ===== Active Session Sync =====

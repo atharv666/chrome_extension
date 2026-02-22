@@ -3,6 +3,7 @@
 // JWT tokens managed by Firebase, session state stored in chrome.storage.local
 
 import { auth } from "./firebase.js";
+import "./webext-compat.js";
 import {
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,

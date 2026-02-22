@@ -883,7 +883,9 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
   }
 
   if (msg.action === "closeTab" && sender.tab) {
-    chrome.tabs.remove(sender.tab.id).catch(() => {});
+    chrome.tabs.remove(sender.tab.id, () => {
+      void chrome.runtime.lastError;
+    });
   }
 
   if (msg.action === "addAllowed") {

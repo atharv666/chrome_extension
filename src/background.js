@@ -37,6 +37,28 @@ const tabTracking = {
   tabMeta: {},
 };
 
+function normalizeDomainLike(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+
+  return raw
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/.*$/, "")
+    .replace(/:\d+$/, "");
+}
+
+function isDomainAllowed(hostname, allowedSites = []) {
+  const normalizedHost = normalizeDomainLike(hostname);
+  if (!normalizedHost) return false;
+
+  return allowedSites.some((site) => {
+    const normalizedSite = normalizeDomainLike(site);
+    if (!normalizedSite) return false;
+    return normalizedHost === normalizedSite || normalizedHost.endsWith(`.${normalizedSite}`);
+  });
+}
+
 function bootstrapTabState() {
   chrome.tabs.query({}, (tabs) => {
     tabs.forEach((tab) => {
@@ -404,8 +426,8 @@ async function postParsedData(payload) {
 async function requestAiDecision(payload) {
   const endpoint = await getAiEndpoint();
 
-  try {
-    const response = await fetch(endpoint, {
+  async function fetchDecision(url) {
+    const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -414,8 +436,24 @@ async function requestAiDecision(payload) {
     if (!response.ok) return null;
     const data = await response.json();
     return data?.decision || null;
+  }
+
+  try {
+    return await fetchDecision(endpoint);
   } catch (error) {
-    console.warn("Focus Flow: ai analyze failed", error);
+    console.warn("Focus Flow: ai analyze failed on configured endpoint", endpoint, error);
+
+    if (endpoint !== DEFAULT_AI_API_ENDPOINT) {
+      try {
+        const decision = await fetchDecision(DEFAULT_AI_API_ENDPOINT);
+        await chrome.storage.local.set({ [AI_API_ENDPOINT_KEY]: DEFAULT_AI_API_ENDPOINT });
+        console.warn("Focus Flow: reverted ai endpoint to default", DEFAULT_AI_API_ENDPOINT);
+        return decision;
+      } catch (fallbackError) {
+        console.warn("Focus Flow: ai analyze fallback failed", fallbackError);
+      }
+    }
+
     return null;
   }
 }
@@ -496,7 +534,27 @@ async function requestImmediateAiIntervention(triggerPayload, sender) {
   };
 
   await postParsedData(payload);
-  const decision = await requestAiDecision(payload);
+  let decision = await requestAiDecision(payload);
+
+  const isIdleFlashcardTrigger =
+    payload.trigger_type === "idle_allowed_site" || payload.trigger_type === "idle_allowed_site_retry";
+
+  if (
+    isIdleFlashcardTrigger &&
+    decision &&
+    decision.intervention === "none" &&
+    decision.flashcard &&
+    decision.flashcard.question
+  ) {
+    decision = {
+      ...decision,
+      intervention: "flashcard",
+      status: decision.status === "focused" ? "mild_distraction" : decision.status,
+      confidence: Math.max(Number(decision.confidence || 0), 0.7),
+      reason_codes: [...(Array.isArray(decision.reason_codes) ? decision.reason_codes : []), "idle_force_flashcard"],
+    };
+  }
+
   await dispatchAiIntervention(decision, payload, tabId || null);
 }
 
@@ -648,9 +706,7 @@ chrome.tabs.onActivated.addListener((activeInfo) => {
       }
 
       const allowed = res.session.allowedSites || [];
-      const isAllowed = allowed.some((site) => {
-        return hostname === site || hostname.endsWith("." + site);
-      });
+      const isAllowed = isDomainAllowed(hostname, allowed);
 
       if (!isAllowed) {
         chrome.tabs
@@ -776,9 +832,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 
     const allowed = res.session.allowedSites || [];
 
-    const isAllowed = allowed.some((site) => {
-      return hostname === site || hostname.endsWith("." + site);
-    });
+    const isAllowed = isDomainAllowed(hostname, allowed);
 
     if (!isAllowed) {
       chrome.tabs

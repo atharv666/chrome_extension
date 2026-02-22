@@ -133,8 +133,8 @@ function sanitizeDecision(raw) {
     mascot_script: Array.isArray(raw.mascot_script)
       ? raw.mascot_script
           .slice(0, 8)
-          .map((line) => ({
-            speaker: line?.speaker === "devil" ? "devil" : "angel",
+          .map((line, idx) => ({
+            speaker: idx % 2 === 0 ? "devil" : "angel",
             text: String(line?.text || "").slice(0, 220),
           }))
       : null,
@@ -442,7 +442,7 @@ ${JSON.stringify(context, null, 2)}
       explanation: String(parsed.explanation || "").slice(0, 360),
     });
     if (isLowQualityFlashcard(card, latest.study_topic, profile)) {
-      return { card: null, generation_mode: mode, quality_reject_reason: "generic_flashcard" };
+      return { card, generation_mode: mode, quality_reject_reason: "generic_flashcard_relaxed_accept" };
     }
     return { card, generation_mode: mode };
   } catch {
@@ -495,6 +495,12 @@ Rules:
         attempts: 3,
       };
     }
+    return {
+      card,
+      generation_mode: "topic_only_rescue",
+      quality_reject_reason: "generic_flashcard_relaxed_accept",
+      attempts: 3,
+    };
   } catch {
     // Keep Gemini-only behavior; caller handles null generation.
   }
@@ -579,6 +585,18 @@ async function generateMascotScriptWithRetries(payload, profile, domain) {
   const studyTopic = summarizeForModel(payload).study_topic;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const script = await generateMascotScriptWithGemini(payload, profile);
+    if (hasUsableMascotScript(script)) {
+      return {
+        script: script.slice(0, 4).map((line, i) => ({
+          speaker: i % 2 === 0 ? "devil" : "angel",
+          text: String(line?.text || "").slice(0, 240),
+        })),
+        attempts: attempt,
+        quality_reject_reason: validateMascotScriptStrict(script, profile, domain, studyTopic)
+          ? null
+          : "mascot_script_relaxed_accept",
+      };
+    }
     if (validateMascotScriptStrict(script, profile, domain, studyTopic)) {
       return { script, attempts: attempt, quality_reject_reason: null };
     }
@@ -614,6 +632,15 @@ Rules:
           text: String(x?.text || "").slice(0, 240),
         }))
       : null;
+    if (hasUsableMascotScript(script)) {
+      return {
+        script,
+        attempts: 3,
+        quality_reject_reason: validateMascotScriptStrict(script, profile, domain, studyTopic)
+          ? null
+          : "mascot_script_relaxed_accept",
+      };
+    }
     if (validateMascotScriptStrict(script, profile, domain, studyTopic)) {
       return { script, attempts: 3, quality_reject_reason: null };
     }
@@ -670,20 +697,53 @@ function isDevilLineWeak(text) {
   return hasPositiveStudy && !hasLure;
 }
 
+function hasUsableFlashcard(card) {
+  if (!card || typeof card !== "object") return false;
+  const question = String(card.question || "").trim();
+  const options = Array.isArray(card.options) ? card.options.filter((x) => String(x || "").trim()) : [];
+  return question.length >= 10 && options.length >= 2;
+}
+
+function hasUsableMascotScript(script) {
+  if (!Array.isArray(script) || script.length < 4) return false;
+  const lines = script.slice(0, 4).map((x) => String(x?.text || "").trim());
+  return lines.every((text) => text.length >= 8);
+}
+
 function validateMascotScriptStrict(script, profile, domain, studyTopic) {
-  if (!Array.isArray(script) || script.length !== 4) return false;
+  if (!Array.isArray(script) || script.length < 4) return false;
+
   const order = ["devil", "angel", "devil", "angel"];
+  const normalized = script.slice(0, 4).map((line, i) => ({
+    speaker: order[i],
+    text: String(line?.text || "").trim(),
+  }));
+
+  if (!normalized.every((line) => line.text.length >= 8)) return false;
+
+  let weakDevilCount = 0;
   for (let i = 0; i < 4; i += 1) {
-    const line = script[i];
+    const line = normalized[i];
     if (!line || line.speaker !== order[i]) return false;
-    if (!hasTopicContextInLine(line.text, profile, domain)) return false;
-    if (line.speaker === "devil" && isDevilLineWeak(line.text)) return false;
+    if (line.speaker === "devil" && isDevilLineWeak(line.text)) weakDevilCount += 1;
   }
-  if (!script.some((line) => hasExplicitStudyTopicMention(line.text, studyTopic))) return false;
-  const blob = script.map((x) => x.text.toLowerCase()).join(" ");
-  if (["stay focused", "one more minute", "come back"].filter((p) => blob.includes(p)).length >= 2) {
+  if (weakDevilCount >= 2) return false;
+
+  const hasAnyTopicContext = normalized.some(
+    (line) => hasTopicContextInLine(line.text, profile, domain) || hasExplicitStudyTopicMention(line.text, studyTopic)
+  );
+  if (!hasAnyTopicContext) return false;
+
+  if (looksGenericMascotScript(normalized, studyTopic, domain, profile)) {
+    const hasTopicMention = normalized.some((line) => hasExplicitStudyTopicMention(line.text, studyTopic));
+    if (!hasTopicMention) return false;
+  }
+
+  const blob = normalized.map((x) => x.text.toLowerCase()).join(" ");
+  if (["stay focused", "one more minute", "come back"].filter((p) => blob.includes(p)).length >= 3) {
     return false;
   }
+
   return true;
 }
 
@@ -860,6 +920,12 @@ app.post("/api/ai/analyze", async (req, res) => {
         decision = {
           ...decision,
           flashcard: generated.card,
+          generation_failed: false,
+        };
+      } else if (hasUsableFlashcard(decision.flashcard)) {
+        decision = {
+          ...decision,
+          generation_failed: false,
         };
       } else {
         decision = {
@@ -882,6 +948,12 @@ app.post("/api/ai/analyze", async (req, res) => {
         decision = {
           ...decision,
           mascot_script: generated.script,
+          generation_failed: false,
+        };
+      } else if (hasUsableMascotScript(decision.mascot_script)) {
+        decision = {
+          ...decision,
+          generation_failed: false,
         };
       } else {
         decision = {
@@ -895,8 +967,10 @@ app.post("/api/ai/analyze", async (req, res) => {
     const now = Date.now();
     const sinceLast = now - (contextBucket.lastInterventionAt || 0);
     const cooldownMs = (decision.cooldown_seconds || 90) * 1000;
+    const isIdleFlashcardTrigger =
+      payload.trigger_type === "idle_allowed_site" || payload.trigger_type === "idle_allowed_site_retry";
 
-    if (decision.intervention !== "none" && sinceLast < cooldownMs) {
+    if (decision.intervention !== "none" && !isIdleFlashcardTrigger && sinceLast < cooldownMs) {
       decision = {
         ...decision,
         intervention: "none",
@@ -905,7 +979,7 @@ app.post("/api/ai/analyze", async (req, res) => {
     }
 
     if (
-      (decision.intervention === "flashcard" && decision.confidence < 0.5) ||
+      (!isIdleFlashcardTrigger && decision.intervention === "flashcard" && decision.confidence < 0.5) ||
       (decision.intervention === "mascot_chat" && decision.confidence < 0.6)
     ) {
       decision = {

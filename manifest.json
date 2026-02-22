@@ -34,7 +34,8 @@
         "dashboard.html",
         "dashboard.css",
         "icons/angel.png",
-        "icons/devil.png"
+        "icons/devil.png",
+        "fahhhhh.mp3"
       ],
       "matches": ["<all_urls>"]
     }

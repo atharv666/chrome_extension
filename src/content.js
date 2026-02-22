@@ -33,6 +33,14 @@ let isCurrentSiteAllowed = false;
 let inactivityTimer = null;
 let lastActivity = Date.now();
 const ALLOWED_SITE_IDLE_LIMIT = 15000; // requested cadence: every 15 seconds when idle
+const INACTIVITY_ACTIVITY_EVENTS = [
+  "mousemove",
+  "keydown",
+  "scroll",
+  "wheel",
+  "click",
+  "touchstart",
+];
 const OFFTOPIC_WARNING_DELAY_MS = 5000;
 let inactivityRemainingMs = ALLOWED_SITE_IDLE_LIMIT;
 
@@ -173,8 +181,26 @@ function getCurrentHostname() {
   }
 }
 
+function normalizeAllowedSite(site) {
+  const value = String(site || "").trim().toLowerCase();
+  if (!value) return "";
+
+  let normalized = value
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/.*$/, "")
+    .replace(/:\d+$/, "");
+
+  return normalized;
+}
+
 function matchesAllowedSite(hostname, allowedSites = []) {
-  return allowedSites.some((site) => hostname === site || hostname.endsWith(`.${site}`));
+  const normalizedHost = normalizeAllowedSite(hostname);
+  return allowedSites.some((site) => {
+    const normalizedSite = normalizeAllowedSite(site);
+    if (!normalizedSite) return false;
+    return normalizedHost === normalizedSite || normalizedHost.endsWith(`.${normalizedSite}`);
+  });
 }
 
 function syncAllowedSiteState() {
@@ -471,6 +497,153 @@ function sendInterventionTelemetry(type, meta = {}) {
   });
 }
 
+let flashcardAudio = null;
+let flashcardAudioPrimed = false;
+let flashcardAudioCtx = null;
+let flashcardAudioBuffer = null;
+let flashcardAudioLoading = false;
+
+function getFlashcardAudio() {
+  if (flashcardAudio) return flashcardAudio;
+  try {
+    const audioUrl = chrome.runtime.getURL("fahhhhh.mp3");
+    flashcardAudio = new Audio(audioUrl);
+    flashcardAudio.preload = "auto";
+    flashcardAudio.volume = 0.9;
+  } catch {
+    flashcardAudio = null;
+  }
+  return flashcardAudio;
+}
+
+function getFlashcardAudioContext() {
+  if (flashcardAudioCtx) return flashcardAudioCtx;
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    flashcardAudioCtx = new Ctx();
+    return flashcardAudioCtx;
+  } catch {
+    return null;
+  }
+}
+
+async function preloadFlashcardAudioBuffer() {
+  if (flashcardAudioBuffer || flashcardAudioLoading) return;
+  const ctx = getFlashcardAudioContext();
+  if (!ctx) return;
+
+  flashcardAudioLoading = true;
+  try {
+    const audioUrl = chrome.runtime.getURL("fahhhhh.mp3");
+    const response = await fetch(audioUrl);
+    const arrayBuffer = await response.arrayBuffer();
+    flashcardAudioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+  } catch {
+    flashcardAudioBuffer = null;
+  } finally {
+    flashcardAudioLoading = false;
+  }
+}
+
+function playFlashcardViaAudioBuffer() {
+  const ctx = getFlashcardAudioContext();
+  if (!ctx || !flashcardAudioBuffer) return;
+
+  const start = () => {
+    try {
+      const source = ctx.createBufferSource();
+      const gain = ctx.createGain();
+      gain.gain.value = 0.9;
+      source.buffer = flashcardAudioBuffer;
+      source.connect(gain);
+      gain.connect(ctx.destination);
+      source.start(0);
+      flashcardAudioPrimed = true;
+    } catch (error) {
+      console.warn("Focus Flow: flashcard buffer playback failed", error);
+    }
+  };
+
+  if (ctx.state === "suspended") {
+    ctx.resume().then(start).catch(() => {});
+  } else {
+    start();
+  }
+}
+
+function warmFlashcardAudioAssets() {
+  getFlashcardAudio();
+  preloadFlashcardAudioBuffer();
+}
+
+function playFlashcardShownSound() {
+  const audio = getFlashcardAudio();
+  if (!audio) {
+    playFlashcardViaAudioBuffer();
+    return;
+  }
+
+  try {
+    audio.pause();
+    audio.currentTime = 0;
+    const playPromise = audio.play();
+    if (playPromise && typeof playPromise.then === "function") {
+      playPromise.then(() => {
+        flashcardAudioPrimed = true;
+      });
+    }
+    if (playPromise && typeof playPromise.catch === "function") {
+      playPromise.catch((error) => {
+        console.warn("Focus Flow: flashcard audio blocked", error);
+        playFlashcardViaAudioBuffer();
+      });
+    }
+  } catch (error) {
+    console.warn("Focus Flow: flashcard audio failed", error);
+    playFlashcardViaAudioBuffer();
+  }
+}
+
+function primeFlashcardAudioFromGesture() {
+  warmFlashcardAudioAssets();
+
+  const audio = getFlashcardAudio();
+  const ctx = getFlashcardAudioContext();
+
+  if (ctx && ctx.state === "suspended") {
+    ctx.resume().then(() => {
+      flashcardAudioPrimed = true;
+    }).catch(() => {});
+  }
+
+  if (flashcardAudioPrimed || !audio) return;
+
+  try {
+    audio.muted = true;
+    const playPromise = audio.play();
+    if (playPromise && typeof playPromise.then === "function") {
+      playPromise
+        .then(() => {
+          audio.pause();
+          audio.currentTime = 0;
+          audio.muted = false;
+          flashcardAudioPrimed = true;
+        })
+        .catch(() => {
+          audio.muted = false;
+        });
+      return;
+    }
+    audio.pause();
+    audio.currentTime = 0;
+    audio.muted = false;
+    flashcardAudioPrimed = true;
+  } catch {
+    audio.muted = false;
+  }
+}
+
 function showAiFlashcard(intervention) {
   if (aiInterventionVisible) return;
   aiInterventionVisible = true;
@@ -610,6 +783,7 @@ function showAiFlashcard(intervention) {
 
   overlay.appendChild(card);
   document.documentElement.appendChild(overlay);
+  playFlashcardShownSound();
 
   sendInterventionTelemetry("flashcard_shown", {
     reason_codes: intervention.reason_codes || [],
@@ -643,6 +817,7 @@ function normalizeMascotTurns(script, topic) {
 
 function showAiUnavailableNotice(kind) {
   const overlay = createOverlay(0.55);
+  aiInterventionVisible = true;
   const card = createCard("420px");
   card.appendChild(createIcon("&#9888;", "#FFF4E8"));
   card.appendChild(createHeading("AI response unavailable"));
@@ -657,6 +832,9 @@ function showAiUnavailableNotice(kind) {
   btn.onclick = () => {
     overlay.remove();
     aiInterventionVisible = false;
+    clearOffTopicFlow();
+    cleanupDistraction();
+    refreshInactivityDetection();
   };
   card.appendChild(btn);
   overlay.appendChild(card);
@@ -675,6 +853,8 @@ function showAiMascotConversation(intervention) {
   const script = Array.isArray(intervention.mascot_script) ? intervention.mascot_script : [];
   const turns = normalizeMascotTurns(script, sessionTopic);
   if (!turns.length) {
+    clearOffTopicFlow();
+    cleanupDistraction();
     showAiUnavailableNotice("mascot");
     return;
   }
@@ -739,15 +919,27 @@ function showAiMascotConversation(intervention) {
 
 function handleAiIntervention(intervention) {
   if (!intervention || !isSessionActive) return;
-  if (distractionStage !== DISTRACTION_STAGE.NONE) return;
+  if (aiInterventionVisible) return;
 
-  if (intervention.generation_failed) {
-    showAiUnavailableNotice(intervention.requestedIntervention === "flashcard" ? "flashcard" : "mascot");
-    return;
+  if (
+    distractionStage === DISTRACTION_STAGE.MASCOT &&
+    !document.getElementById("ff-overlay")
+  ) {
+    cleanupDistraction();
   }
+
+  if (distractionStage !== DISTRACTION_STAGE.NONE) return;
 
   const triggerType = intervention.triggerType;
   const preferred = intervention.requestedIntervention;
+  const hasFlashcardPayload = Boolean(intervention.flashcard?.question);
+  const hasMascotPayload = Array.isArray(intervention.mascot_script)
+    && intervention.mascot_script.some((line) => String(line?.text || "").trim().length > 0);
+
+  if (intervention.generation_failed && !hasFlashcardPayload && !hasMascotPayload) {
+    showAiUnavailableNotice(intervention.requestedIntervention === "flashcard" ? "flashcard" : "mascot");
+    return;
+  }
 
   if (triggerType === "offtopic_site" || preferred === "mascot_chat") {
     if (offTopicFlow.active && offTopicFlow.phase < 2) {
@@ -763,7 +955,7 @@ function handleAiIntervention(intervention) {
     triggerType === "idle_allowed_site" || triggerType === "idle_allowed_site_retry";
 
   if (isIdleFlashcardTrigger && intervention.intervention === "flashcard") {
-    if (!intervention.flashcard || !intervention.flashcard.question) {
+    if (!hasFlashcardPayload) {
       showAiUnavailableNotice("flashcard");
       return;
     }
@@ -828,6 +1020,7 @@ function recordDistractionEnd(choice) {
 chrome.storage.local.get(["session"], (res) => {
   if (res.session && res.session.active) {
     isSessionActive = true;
+    warmFlashcardAudioAssets();
     sessionTopic = res.session.topic || "";
     currentAllowedSites = res.session.allowedSites || [];
     syncAllowedSiteState();
@@ -840,6 +1033,7 @@ chrome.storage.onChanged.addListener((changes) => {
     const s = changes.session.newValue;
     if (s && s.active) {
       isSessionActive = true;
+      warmFlashcardAudioAssets();
       sessionTopic = s.topic || "";
       currentAllowedSites = s.allowedSites || [];
       syncAllowedSiteState();
@@ -865,7 +1059,7 @@ function initInactivityDetection() {
   lastActivity = Date.now();
   inactivityRemainingMs = ALLOWED_SITE_IDLE_LIMIT;
 
-  ["mousemove"].forEach((ev) => {
+  INACTIVITY_ACTIVITY_EVENTS.forEach((ev) => {
     document.addEventListener(ev, handleActivity, true);
   });
 
@@ -878,7 +1072,7 @@ function cleanupInactivityDetection(removeListeners = true) {
     inactivityTimer = null;
   }
   if (removeListeners) {
-    ["mousemove"].forEach((ev) => {
+    INACTIVITY_ACTIVITY_EVENTS.forEach((ev) => {
       document.removeEventListener(ev, handleActivity, true);
     });
   }
@@ -902,6 +1096,8 @@ function resumeInactivityTimer() {
 }
 
 function handleActivity() {
+  primeFlashcardAudioFromGesture();
+
   if (!pageIsVisible || !isCurrentSiteAllowed) return;
 
   const now = Date.now();
